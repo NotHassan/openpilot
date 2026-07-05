@@ -3,54 +3,74 @@ on:
   schedule:
     - cron: '47 9 * * *'   # daily, 30 min after the opendbc fork syncs
   workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: 'Upstream repo (owner/name) — override for testing'
+        default: 'infiniteCable2/openpilot'
+        required: false
+      upstream_ref:
+        description: 'Upstream ref — override for testing'
+        default: 'master'
+        required: false
 
 permissions:
   contents: write
+  pull-requests: write
   actions: write
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UP_REPO: ${{ github.event.inputs.upstream_repo || 'infiniteCable2/openpilot' }}
+      UP_REF: ${{ github.event.inputs.upstream_ref || 'master' }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: master
           fetch-depth: 0
 
-      - name: Merge upstream master into master
+      - name: Merge upstream into master (PR on conflict)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote add upstream https://github.com/infiniteCable2/openpilot.git
-          git fetch upstream master
+          git remote add upstream "https://github.com/${UP_REPO}.git"
+          git fetch upstream "${UP_REF}"
 
-          # merge without committing; submodule pointer + .gitmodules conflicts are expected and resolved below
-          git merge upstream/master --no-commit || true
+          DBSHA=$(git ls-remote https://github.com/NotHassan/opendbc.git refs/heads/master | cut -f1)
 
-          # keep OUR .gitmodules (opendbc points at NotHassan/opendbc)
+          # merge without committing; submodule pointer + .gitmodules conflicts are expected and auto-resolved
+          git merge "upstream/${UP_REF}" --no-commit || true
           git checkout --ours .gitmodules 2>/dev/null || true
           git add .gitmodules
-
-          # always pin opendbc_repo to the head of our synced opendbc branch
-          DBSHA=$(git ls-remote https://github.com/NotHassan/opendbc.git refs/heads/master | cut -f1)
           git update-index --cacheinfo 160000,"$DBSHA",opendbc_repo
 
-          # any OTHER unresolved conflict is a real one -> fail so the owner gets notified
           if git diff --name-only --diff-filter=U | grep -vE '^(opendbc_repo|\.gitmodules)$' | grep -q .; then
-            echo "::error::Real merge conflicts need manual resolution:"
-            git diff --name-only --diff-filter=U
-            exit 1
-          fi
-
-          if git diff --cached --quiet && git diff --quiet; then
+            echo "Real conflicts -> opening PR for manual resolution"
+            git merge --abort
+            # PR branch = upstream + pre-resolved fork-specific files, so only real
+            # text conflicts remain (submodule conflicts can't be resolved in the web UI)
+            git checkout -B upstream-merge "upstream/${UP_REF}"
+            git checkout master -- .gitmodules
+            git update-index --cacheinfo 160000,"$DBSHA",opendbc_repo
+            git commit -m "Pre-resolve fork-specific files (.gitmodules, opendbc_repo pin)"
+            git push -f origin upstream-merge
+            if [ -z "$(gh pr list --head upstream-merge --base master --state open --json number --jq '.[].number')" ]; then
+              gh pr create --head upstream-merge --base master \
+                --title "Upstream sync needs manual conflict resolution" \
+                --assignee NotHassan \
+                --body "Automatic merge of \`${UP_REPO}\` \`${UP_REF}\` into \`master\` hit conflicts. Click **Resolve conflicts**, keep the Tiguan changes where they collide, then merge. Daily syncs resume automatically after."
+            else
+              echo "PR already open - branch updated to latest upstream."
+            fi
+          elif git diff --cached --quiet && git diff --quiet; then
             echo "Already up to date."
           else
-            git commit -m "Merge upstream infiniteCable2/openpilot master (opendbc_repo -> NotHassan/opendbc master @ ${DBSHA:0:9})" || true
+            git commit -m "Merge upstream ${UP_REPO} ${UP_REF} (opendbc_repo -> NotHassan/opendbc master @ ${DBSHA:0:9})" || true
             git push origin master
           fi
 
       - name: Keepalive (reset GitHub's 60-day scheduled-workflow timer)
         if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/sync-upstream.yml/enable"
