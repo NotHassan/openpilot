@@ -14,10 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: tiguan-mk3
+          ref: master
           fetch-depth: 0
 
-      - name: Merge upstream master into tiguan-mk3
+      - name: Merge upstream master into master
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -32,7 +32,7 @@ jobs:
           git add .gitmodules
 
           # always pin opendbc_repo to the head of our synced opendbc branch
-          DBSHA=$(git ls-remote https://github.com/NotHassan/opendbc.git refs/heads/tiguan-mk3 | cut -f1)
+          DBSHA=$(git ls-remote https://github.com/NotHassan/opendbc.git refs/heads/master | cut -f1)
           git update-index --cacheinfo 160000,"$DBSHA",opendbc_repo
 
           # any OTHER unresolved conflict is a real one -> fail so the owner gets notified
@@ -45,8 +45,8 @@ jobs:
           if git diff --cached --quiet && git diff --quiet; then
             echo "Already up to date."
           else
-            git commit -m "Merge upstream infiniteCable2/openpilot master (opendbc_repo -> NotHassan/opendbc tiguan-mk3 @ ${DBSHA:0:9})" || true
-            git push origin tiguan-mk3
+            git commit -m "Merge upstream infiniteCable2/openpilot master (opendbc_repo -> NotHassan/opendbc master @ ${DBSHA:0:9})" || true
+            git push origin master
           fi
 
       - name: Keepalive (reset GitHub's 60-day scheduled-workflow timer)
