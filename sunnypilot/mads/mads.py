@@ -23,6 +23,12 @@ SafetyModel = structs.CarParams.SafetyModel
 SET_SPEED_BUTTONS = (ButtonType.accelCruise, ButtonType.resumeCruise, ButtonType.decelCruise, ButtonType.setCruise)
 IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
 
+# TIGUAN: pause lateral while hands are on the capacitive wheel (carState.steeringSlightlyPressed),
+# resume after hands off for ~1s. Set False to restore stock behavior.
+PAUSE_LATERAL_ON_HANDS_ON = True
+HANDS_ON_PAUSE_FRAMES = 30    # ~0.3s at 100Hz before touch pauses lateral
+HANDS_OFF_RESUME_FRAMES = 100  # ~1.0s at 100Hz hands-off before lateral resumes
+
 
 class ModularAssistiveDrivingSystem:
   def __init__(self, selfdrive):
@@ -34,6 +40,8 @@ class ModularAssistiveDrivingSystem:
     self.active = False
     self.available = False
     self.lateral_mismatch_counter = 0
+    self.hands_on_frames = 0      # TIGUAN: hands-on pause
+    self.hands_off_frames = 0     # TIGUAN: hands-on pause
     self.allow_always = False
     self.no_main_cruise = False
     self.selfdrive = selfdrive
@@ -69,6 +77,10 @@ class ModularAssistiveDrivingSystem:
     return False
 
   def should_silent_lkas_enable(self, CS: structs.CarState) -> bool:
+    # TIGUAN: while hands are on the wheel (or off for less than ~1s), stay paused
+    if PAUSE_LATERAL_ON_HANDS_ON and (CS.steeringSlightlyPressed or self.hands_off_frames < HANDS_OFF_RESUME_FRAMES):
+      return False
+
     if self.steering_mode_on_brake == MadsSteeringModeOnBrake.PAUSE and self.pedal_pressed_non_gas_pressed(CS):
       return False
 
@@ -194,6 +206,17 @@ class ModularAssistiveDrivingSystem:
           if self.events_sp.contains(EventNameSP.lkasEnable):
             self.events_sp.remove(EventNameSP.lkasEnable)
             self.events_sp.add(EventNameSP.pedalPressedAlertOnly)
+
+    # TIGUAN: sustained capacitive touch pauses lateral; counters also feed should_silent_lkas_enable
+    if PAUSE_LATERAL_ON_HANDS_ON:
+      if CS.steeringSlightlyPressed:
+        self.hands_on_frames += 1
+        self.hands_off_frames = 0
+      else:
+        self.hands_off_frames += 1
+        self.hands_on_frames = 0
+      if self.enabled and self.hands_on_frames >= HANDS_ON_PAUSE_FRAMES:
+        self.transition_paused_state()
 
     if self.should_silent_lkas_enable(CS):
       if self.state_machine.state == State.paused:
