@@ -30,7 +30,9 @@ IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
 # brief rack-recoil transients can exceed 1 Nm hands-off. Set False to restore stock behavior.
 PAUSE_LATERAL_ON_HANDS_ON = True
 HANDS_ON_PAUSE_FRAMES = 30      # ~0.3s at 100Hz of touch before pausing
-PALM_TORQUE = 100               # 1.0 Nm
+PALM_TORQUE = 100               # 1.0 Nm -- to TRIGGER a pause (assist active -> recoil transients exist)
+PALM_TORQUE_HOLD = 40           # 0.4 Nm -- to HOLD a pause (no assist while paused -> torque is pure driver,
+                                #           so even light palm guidance mid-turn keeps lateral paused)
 PALM_TORQUE_PAUSE_FRAMES = 50   # ~0.5s at 100Hz of sustained torque before pausing
 HANDS_OFF_RESUME_FRAMES = 50    # ~0.5s at 100Hz with neither before lateral resumes
 
@@ -83,8 +85,9 @@ class ModularAssistiveDrivingSystem:
     return False
 
   def should_silent_lkas_enable(self, CS: structs.CarState) -> bool:
-    # TIGUAN: while the driver contacts the wheel (touch or torque), or released less than ~0.5s, stay paused
-    if PAUSE_LATERAL_ON_HANDS_ON and (CS.steeringSlightlyPressed or abs(CS.steeringTorque) > PALM_TORQUE
+    # TIGUAN: while the driver contacts the wheel (touch, or light torque -- see PALM_TORQUE_HOLD),
+    # or released less than ~0.5s, stay paused
+    if PAUSE_LATERAL_ON_HANDS_ON and (CS.steeringSlightlyPressed or abs(CS.steeringTorque) > PALM_TORQUE_HOLD
                                       or self.hands_off_frames < HANDS_OFF_RESUME_FRAMES):
       return False
 
@@ -219,9 +222,10 @@ class ModularAssistiveDrivingSystem:
     if PAUSE_LATERAL_ON_HANDS_ON:
       touch = CS.steeringSlightlyPressed
       palm = abs(CS.steeringTorque) > PALM_TORQUE
+      holding = abs(CS.steeringTorque) > PALM_TORQUE_HOLD  # light contact counts toward *staying* paused
       self.hands_on_frames = self.hands_on_frames + 1 if touch else 0
       self.palm_frames = self.palm_frames + 1 if palm else 0
-      self.hands_off_frames = 0 if (touch or palm) else self.hands_off_frames + 1
+      self.hands_off_frames = 0 if (touch or holding) else self.hands_off_frames + 1
       if self.enabled and (self.hands_on_frames >= HANDS_ON_PAUSE_FRAMES or self.palm_frames >= PALM_TORQUE_PAUSE_FRAMES):
         self.transition_paused_state()
 
