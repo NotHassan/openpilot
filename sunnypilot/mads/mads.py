@@ -27,7 +27,7 @@ IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
 # resume after hands off for ~1s. Set False to restore stock behavior.
 PAUSE_LATERAL_ON_HANDS_ON = True
 HANDS_ON_PAUSE_FRAMES = 30    # ~0.3s at 100Hz before touch pauses lateral
-HANDS_OFF_RESUME_FRAMES = 100  # ~1.0s at 100Hz hands-off before lateral resumes
+HANDS_OFF_RESUME_FRAMES = 50   # ~0.5s at 100Hz hands-off before lateral resumes
 
 
 class ModularAssistiveDrivingSystem:
