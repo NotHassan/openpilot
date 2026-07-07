@@ -23,11 +23,16 @@ SafetyModel = structs.CarParams.SafetyModel
 SET_SPEED_BUTTONS = (ButtonType.accelCruise, ButtonType.resumeCruise, ButtonType.decelCruise, ButtonType.setCruise)
 IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
 
-# TIGUAN: pause lateral while hands are on the capacitive wheel (carState.steeringSlightlyPressed),
-# resume after hands off for ~1s. Set False to restore stock behavior.
+# TIGUAN: pause lateral while the driver has hands on the wheel, resume shortly after release.
+# Detection is capacitive touch (carState.steeringSlightlyPressed) OR sustained steering torque --
+# palm-on-wheel steering evades the capacitive zones entirely (sensor reads 0 while the driver
+# turns at >1 Nm), so torque is the fallback. Torque needs a longer sustain than touch because
+# brief rack-recoil transients can exceed 1 Nm hands-off. Set False to restore stock behavior.
 PAUSE_LATERAL_ON_HANDS_ON = True
-HANDS_ON_PAUSE_FRAMES = 30    # ~0.3s at 100Hz before touch pauses lateral
-HANDS_OFF_RESUME_FRAMES = 50   # ~0.5s at 100Hz hands-off before lateral resumes
+HANDS_ON_PAUSE_FRAMES = 30      # ~0.3s at 100Hz of touch before pausing
+PALM_TORQUE = 100               # 1.0 Nm
+PALM_TORQUE_PAUSE_FRAMES = 50   # ~0.5s at 100Hz of sustained torque before pausing
+HANDS_OFF_RESUME_FRAMES = 50    # ~0.5s at 100Hz with neither before lateral resumes
 
 
 class ModularAssistiveDrivingSystem:
@@ -41,6 +46,7 @@ class ModularAssistiveDrivingSystem:
     self.available = False
     self.lateral_mismatch_counter = 0
     self.hands_on_frames = 0      # TIGUAN: hands-on pause
+    self.palm_frames = 0          # TIGUAN: hands-on pause
     self.hands_off_frames = 0     # TIGUAN: hands-on pause
     self.allow_always = False
     self.no_main_cruise = False
@@ -77,8 +83,9 @@ class ModularAssistiveDrivingSystem:
     return False
 
   def should_silent_lkas_enable(self, CS: structs.CarState) -> bool:
-    # TIGUAN: while hands are on the wheel (or off for less than ~1s), stay paused
-    if PAUSE_LATERAL_ON_HANDS_ON and (CS.steeringSlightlyPressed or self.hands_off_frames < HANDS_OFF_RESUME_FRAMES):
+    # TIGUAN: while the driver contacts the wheel (touch or torque), or released less than ~0.5s, stay paused
+    if PAUSE_LATERAL_ON_HANDS_ON and (CS.steeringSlightlyPressed or abs(CS.steeringTorque) > PALM_TORQUE
+                                      or self.hands_off_frames < HANDS_OFF_RESUME_FRAMES):
       return False
 
     if self.steering_mode_on_brake == MadsSteeringModeOnBrake.PAUSE and self.pedal_pressed_non_gas_pressed(CS):
@@ -207,15 +214,15 @@ class ModularAssistiveDrivingSystem:
             self.events_sp.remove(EventNameSP.lkasEnable)
             self.events_sp.add(EventNameSP.pedalPressedAlertOnly)
 
-    # TIGUAN: sustained capacitive touch pauses lateral; counters also feed should_silent_lkas_enable
+    # TIGUAN: sustained touch OR sustained torque (palm steering) pauses lateral;
+    # counters also feed should_silent_lkas_enable
     if PAUSE_LATERAL_ON_HANDS_ON:
-      if CS.steeringSlightlyPressed:
-        self.hands_on_frames += 1
-        self.hands_off_frames = 0
-      else:
-        self.hands_off_frames += 1
-        self.hands_on_frames = 0
-      if self.enabled and self.hands_on_frames >= HANDS_ON_PAUSE_FRAMES:
+      touch = CS.steeringSlightlyPressed
+      palm = abs(CS.steeringTorque) > PALM_TORQUE
+      self.hands_on_frames = self.hands_on_frames + 1 if touch else 0
+      self.palm_frames = self.palm_frames + 1 if palm else 0
+      self.hands_off_frames = 0 if (touch or palm) else self.hands_off_frames + 1
+      if self.enabled and (self.hands_on_frames >= HANDS_ON_PAUSE_FRAMES or self.palm_frames >= PALM_TORQUE_PAUSE_FRAMES):
         self.transition_paused_state()
 
     if self.should_silent_lkas_enable(CS):
