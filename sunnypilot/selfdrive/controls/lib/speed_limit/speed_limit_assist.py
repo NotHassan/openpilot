@@ -373,7 +373,11 @@ class SpeedLimitAssist:
     return round(self._speed_limit * speed_conv) if self._has_speed_limit else -1
 
   def _expected_walk_change(self) -> bool:
-    # a cluster change moving toward the current target is our own ICBM walking, not the user
+    # ICBM only ever walks the setpoint in +/-1 steps (set/resume presses, rate limited), so a
+    # jump of >=2 in one frame is provably the user (e.g. a +/-10 button), regardless of direction
+    if abs(self.v_cruise_cluster_conv - self.prev_v_cruise_cluster_conv) >= 2:
+      return False
+    # a +/-1 change moving toward the current target is our own ICBM walking, not the user
     return abs(self.v_cruise_cluster_conv - self.target_set_speed_conv) < \
            abs(self.prev_v_cruise_cluster_conv - self.prev_target_set_speed_conv)
 
