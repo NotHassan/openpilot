@@ -21,6 +21,22 @@ DESCRIPTIONS = {
   "ShowDynamicSteeringLearnerGraph": tr_noop(
     "Display the current dynamic steering learner fit, marker, and status information in the onroad UI."
   ),
+  "MadsPauseLateralOnHandsOn": tr_noop(
+    "Pause lateral control while hands are detected on the wheel (capacitive touch or sustained torque); " +
+    "resume shortly after release. Requires a capacitive steering wheel for touch detection."
+  ),
+  "SpeedLimitNonPcmAutoMode": tr_noop(
+    "Fully automatic speed limit assist for stock-longitudinal cars: no confirmations, zone changes " +
+    "auto-apply, and your manual setpoint is respected for the current zone."
+  ),
+  "SpeedLimitHybridOffset": tr_noop(
+    "With a fixed speed limit offset, apply half the offset below 60 km/h (e.g. +20: 40 zone -> 50, " +
+    "100 zone -> 120)."
+  ),
+  "CurvaturePidLaneGate": tr_noop(
+    "Disable curvature PID error amplification while lane line confidence is low (e.g. crossing " +
+    "intersections), falling back to pure feedforward so path guesses stay gentle."
+  ),
   "EnableLongComfortMode": tr_noop(
     "Enables longitudinal jerk and accel deviation limit control for safe and comfortable driving"
   ),
@@ -139,6 +155,30 @@ class ICTogglesLayout(Widget):
       "EnableCurvatureD": (
         lambda: tr("Enable Dynamic Steering Learner"),
         DESCRIPTIONS["EnableCurvatureD"],
+        "chffr_wheel.png",
+        False,
+      ),
+      "MadsPauseLateralOnHandsOn": (
+        lambda: tr("Pause Steering On Hands-On"),
+        DESCRIPTIONS["MadsPauseLateralOnHandsOn"],
+        "chffr_wheel.png",
+        False,
+      ),
+      "SpeedLimitNonPcmAutoMode": (
+        lambda: tr("Speed Limit Assist: Auto Mode"),
+        DESCRIPTIONS["SpeedLimitNonPcmAutoMode"],
+        "speed_limit.png",
+        False,
+      ),
+      "SpeedLimitHybridOffset": (
+        lambda: tr("Speed Limit Offset: Hybrid"),
+        DESCRIPTIONS["SpeedLimitHybridOffset"],
+        "speed_limit.png",
+        False,
+      ),
+      "CurvaturePidLaneGate": (
+        lambda: tr("Curvature PID: Lane Confidence Gate"),
+        DESCRIPTIONS["CurvaturePidLaneGate"],
         "chffr_wheel.png",
         False,
       ),

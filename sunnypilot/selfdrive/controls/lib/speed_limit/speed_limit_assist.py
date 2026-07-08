@@ -39,13 +39,14 @@ LIMIT_MAX_ACC = 1.0   # m/s^2 Maximum acceleration allowed for limit controllers
 LIMIT_MIN_SPEED = 8.33  # m/s, Minimum speed limit to provide as solution on limit controllers.
 LIMIT_SPEED_OFFSET_TH = -1.  # m/s Maximum offset between speed limit and current speed for adapting state.
 
-# TIGUAN auto mode (non-PCM-long / ICBM cars): fully automatic, zero confirmations, user-first.
+# Auto mode (param SpeedLimitNonPcmAutoMode; non-PCM-long / ICBM cars): fully automatic, zero
+# confirmations, user-first.
 #  - the user's manual setpoint is law for the CURRENT zone: overriding pauses the assist and
 #    records the zone's limit; re-announcements of the same limit (incl. through nav dropouts)
 #    never re-assert
 #  - an actual zone-value change re-engages automatically at limit+offset, no confirmation
 #  - on initial engage, the user's chosen setpoint is respected until the first zone change
-TIGUAN_AUTO_MODE = True
+
 V_CRUISE_UNSET = 255.
 
 CRUISE_BUTTONS_PLUS = (ButtonType.accelCruise, ButtonType.resumeCruise)
@@ -70,6 +71,7 @@ class SpeedLimitAssist:
     self.is_metric = self.params.get_bool("IsMetric")
     set_speed_limit_assist_availability(self.CP, self.CP_SP, self.params)
     self.enabled = self.params.get("SpeedLimitMode", return_default=True) == Mode.assist
+    self.non_pcm_auto_mode = self.params.get_bool("SpeedLimitNonPcmAutoMode")
     self.long_enabled = False
     self.long_enabled_prev = False
     self.is_enabled = False
@@ -153,6 +155,7 @@ class SpeedLimitAssist:
       self.is_metric = self.params.get_bool("IsMetric")
       set_speed_limit_assist_availability(self.CP, self.CP_SP, self.params)
       self.enabled = self.params.get("SpeedLimitMode", return_default=True) == Mode.assist
+      self.non_pcm_auto_mode = self.params.get_bool("SpeedLimitNonPcmAutoMode")
 
   def update_car_state(self, CS: car.CarState) -> None:
     now = time.monotonic()
@@ -382,7 +385,7 @@ class SpeedLimitAssist:
            abs(self.prev_v_cruise_cluster_conv - self.prev_target_set_speed_conv)
 
   def update_state_machine_non_pcm_auto(self):
-    # TIGUAN auto mode -- see TIGUAN_AUTO_MODE above. States used: active / inactive / disabled.
+    # Auto mode -- see SpeedLimitNonPcmAutoMode note above. States: active / inactive / disabled.
     self.long_engaged_timer = max(0, self.long_engaged_timer - 1)
     limit_conv = self._limit_conv()
 
@@ -451,7 +454,7 @@ class SpeedLimitAssist:
     self._state_prev = self.state
     if self.pcm_op_long:
       self.is_enabled, self.is_active = self.update_state_machine_pcm_op_long()
-    elif TIGUAN_AUTO_MODE:
+    elif self.non_pcm_auto_mode:
       self.is_enabled, self.is_active = self.update_state_machine_non_pcm_auto()
     else:
       self.is_enabled, self.is_active = self.update_state_machine_non_pcm_long()

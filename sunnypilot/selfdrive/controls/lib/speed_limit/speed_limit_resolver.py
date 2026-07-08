@@ -42,6 +42,7 @@ class SpeedLimitResolver:
     self.distance_solutions = {}  # Store for distance to current speed limit start for different sources
 
     self.policy = self.params.get("SpeedLimitPolicy", return_default=True)
+    self.hybrid_offset = self.params.get_bool("SpeedLimitHybridOffset")
     self.policy = get_sanitize_int_param(
       "SpeedLimitPolicy",
       Policy.min().value,
@@ -60,6 +61,7 @@ class SpeedLimitResolver:
       self._reset_limit_sources(source)
 
     self.is_metric = self.params.get_bool("IsMetric")
+    self.hybrid_offset = self.params.get_bool("SpeedLimitHybridOffset")
     self.offset_type = get_sanitize_int_param(
       "SpeedLimitOffsetType",
       OffsetType.min().value,
@@ -92,13 +94,14 @@ class SpeedLimitResolver:
   def update_params(self):
     if self.frame % int(PARAMS_UPDATE_PERIOD / DT_MDL) == 0:
       self.policy = self.params.get("SpeedLimitPolicy", return_default=True)
+      self.hybrid_offset = self.params.get_bool("SpeedLimitHybridOffset")
       self.is_metric = self.params.get_bool("IsMetric")
+      self.hybrid_offset = self.params.get_bool("SpeedLimitHybridOffset")
       self.offset_type = self.params.get("SpeedLimitOffsetType", return_default=True)
       self.offset_value = self.params.get("SpeedLimitValueOffset", return_default=True)
 
-  # TIGUAN: hybrid offset -- full fixed offset at road speeds, half offset in slow zones.
-  # offset_value=20: 30->40, 40->50, 50->60, 60->80, 70->90, 80->100, 100->120.
-  HYBRID_FIXED_OFFSET = True
+  # Hybrid offset (param SpeedLimitHybridOffset) -- full fixed offset at road speeds, half offset
+  # in slow zones. offset_value=20: 30->40, 40->50, 50->60, 60->80, 70->90, 80->100, 100->120.
   HYBRID_THRESHOLD = {True: 60, False: 40}  # km/h / mph: full offset at/above, half below
 
   def _get_speed_limit_offset(self) -> float:
@@ -106,7 +109,7 @@ class SpeedLimitResolver:
       return 0
     elif self.offset_type == OffsetType.fixed:
       speed_conv = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
-      if self.HYBRID_FIXED_OFFSET and 0 < self.speed_limit < self.HYBRID_THRESHOLD[self.is_metric] * speed_conv:
+      if self.hybrid_offset and 0 < self.speed_limit < self.HYBRID_THRESHOLD[self.is_metric] * speed_conv:
         return float(self.offset_value * 0.5 * speed_conv)
       return float(self.offset_value * speed_conv)
     elif self.offset_type == OffsetType.percentage:

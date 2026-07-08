@@ -23,12 +23,11 @@ SafetyModel = structs.CarParams.SafetyModel
 SET_SPEED_BUTTONS = (ButtonType.accelCruise, ButtonType.resumeCruise, ButtonType.decelCruise, ButtonType.setCruise)
 IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
 
-# TIGUAN: pause lateral while the driver has hands on the wheel, resume shortly after release.
-# Detection is capacitive touch (carState.steeringSlightlyPressed) OR sustained steering torque --
-# palm-on-wheel steering evades the capacitive zones entirely (sensor reads 0 while the driver
-# turns at >1 Nm), so torque is the fallback. Torque needs a longer sustain than touch because
-# brief rack-recoil transients can exceed 1 Nm hands-off. Set False to restore stock behavior.
-PAUSE_LATERAL_ON_HANDS_ON = True
+# Hands-on pause (param MadsPauseLateralOnHandsOn): pause lateral while the driver has hands on
+# the wheel, resume shortly after release. Detection is capacitive touch
+# (carState.steeringSlightlyPressed) OR sustained steering torque -- palm-on-wheel steering evades
+# capacitive zones entirely, so torque is the fallback. Torque needs a longer sustain than touch
+# because brief rack-recoil transients can exceed 1 Nm hands-off.
 HANDS_ON_PAUSE_FRAMES = 30      # ~0.3s at 100Hz of touch before pausing
 PALM_TORQUE = 100               # 1.0 Nm -- to TRIGGER a pause (assist active -> recoil transients exist)
 PALM_TORQUE_HOLD = 40           # 0.4 Nm -- to HOLD a pause (no assist while paused -> torque is pure driver,
@@ -69,12 +68,14 @@ class ModularAssistiveDrivingSystem:
 
     # read params on init
     self.enabled_toggle = self.params.get_bool("Mads")
+    self.pause_on_hands_on = self.params.get_bool("MadsPauseLateralOnHandsOn")
     self.main_enabled_toggle = self.params.get_bool("MadsMainCruiseAllowed")
     self.steering_mode_on_brake = read_steering_mode_param(self.CP, self.CP_SP, self.params)
     self.unified_engagement_mode = self.params.get_bool("MadsUnifiedEngagementMode")
 
   def read_params(self):
     self.main_enabled_toggle = self.params.get_bool("MadsMainCruiseAllowed")
+    self.pause_on_hands_on = self.params.get_bool("MadsPauseLateralOnHandsOn")
     self.unified_engagement_mode = self.params.get_bool("MadsUnifiedEngagementMode")
 
   def pedal_pressed_non_gas_pressed(self, CS: structs.CarState) -> bool:
@@ -87,8 +88,8 @@ class ModularAssistiveDrivingSystem:
   def should_silent_lkas_enable(self, CS: structs.CarState) -> bool:
     # TIGUAN: while the driver contacts the wheel (touch, or light torque -- see PALM_TORQUE_HOLD),
     # or released less than ~0.5s, stay paused
-    if PAUSE_LATERAL_ON_HANDS_ON and (CS.steeringSlightlyPressed or abs(CS.steeringTorque) > PALM_TORQUE_HOLD
-                                      or self.hands_off_frames < HANDS_OFF_RESUME_FRAMES):
+    if self.pause_on_hands_on and (CS.steeringSlightlyPressed or abs(CS.steeringTorque) > PALM_TORQUE_HOLD
+                                   or self.hands_off_frames < HANDS_OFF_RESUME_FRAMES):
       return False
 
     if self.steering_mode_on_brake == MadsSteeringModeOnBrake.PAUSE and self.pedal_pressed_non_gas_pressed(CS):
@@ -219,7 +220,7 @@ class ModularAssistiveDrivingSystem:
 
     # TIGUAN: sustained touch OR sustained torque (palm steering) pauses lateral;
     # counters also feed should_silent_lkas_enable
-    if PAUSE_LATERAL_ON_HANDS_ON:
+    if self.pause_on_hands_on:
       touch = CS.steeringSlightlyPressed
       palm = abs(CS.steeringTorque) > PALM_TORQUE
       holding = abs(CS.steeringTorque) > PALM_TORQUE_HOLD  # light contact counts toward *staying* paused

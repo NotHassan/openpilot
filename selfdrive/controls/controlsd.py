@@ -37,8 +37,9 @@ class Controls(ControlsExt):
   def __init__(self) -> None:
     self.params = Params()
     self.param_counter = 0
-    self.lane_conf_filtered = 1.0   # TIGUAN: lane-confidence PID gate state
-    self.lane_conf_ok = True        # TIGUAN: lane-confidence PID gate state
+    self.lane_conf_filtered = 1.0   # lane-confidence PID gate state (param CurvaturePidLaneGate)
+    self.lane_conf_ok = True
+    self.curvature_pid_lane_gate = self.params.get_bool("CurvaturePidLaneGate")
     cloudlog.info("controlsd is waiting for CarParams")
     self.CP = messaging.log_from_bytes(self.params.get("CarParams", block=True), car.CarParams)
     cloudlog.info("controlsd got CarParams")
@@ -102,6 +103,7 @@ class Controls(ControlsExt):
     if self.param_counter >= 100:
       self.param_counter = 0
       self.enable_curvature_controller = self.params.get_bool("EnableCurvatureController")
+      self.curvature_pid_lane_gate = self.params.get_bool("CurvaturePidLaneGate")
       if self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
         self.LaC.set_pid_enabled(self.enable_curvature_controller)
       self.enable_smooth_steer = self.params.get_bool("EnableSmoothSteer")
@@ -131,7 +133,7 @@ class Controls(ControlsExt):
     else:
       self.lane_conf_ok = self.lane_conf_filtered > 0.70
     if self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
-      self.LaC.set_pid_enabled(self.enable_curvature_controller and self.lane_conf_ok)
+      self.LaC.set_pid_enabled(self.enable_curvature_controller and (self.lane_conf_ok or not self.curvature_pid_lane_gate))
 
   def state_control(self):
     CS = self.sm['carState']

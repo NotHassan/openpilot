@@ -23,6 +23,10 @@ class ICTogglesLayoutMici(NavScroller):
     enable_accel_bar            = BigParamControl("Enable Accel Bar", "ShowAccelBar")
     enable_curvatured           = BigParamControl("Enable Dynamic Steering Learner", "EnableCurvatureD")
     show_curvatured_graph       = BigParamControl("Show Dynamic Steering Learner Graph", "ShowDynamicSteeringLearnerGraph")
+    pause_on_hands_on           = BigParamControl("Pause Steering On Hands-On", "MadsPauseLateralOnHandsOn")
+    sl_auto_mode                = BigParamControl("Speed Limit Assist: Auto Mode", "SpeedLimitNonPcmAutoMode")
+    sl_hybrid_offset            = BigParamControl("Speed Limit Offset: Hybrid", "SpeedLimitHybridOffset")
+    pid_lane_gate               = BigParamControl("Curvature PID: Lane Confidence Gate", "CurvaturePidLaneGate")
 
     self._scroller.add_widgets([
       enable_curvature_correction,
@@ -38,6 +42,10 @@ class ICTogglesLayoutMici(NavScroller):
       enable_onroad_screen_timer,
       enable_accel_bar,
       enable_curvatured,
+      pause_on_hands_on,
+      sl_auto_mode,
+      sl_hybrid_offset,
+      pid_lane_gate,
       show_curvatured_graph,
     ])
 
@@ -56,6 +64,10 @@ class ICTogglesLayoutMici(NavScroller):
       ("DisableScreenTimer", enable_onroad_screen_timer),
       ("ShowAccelBar", enable_accel_bar),
       ("EnableCurvatureD", enable_curvatured),
+      ("MadsPauseLateralOnHandsOn", pause_on_hands_on),
+      ("SpeedLimitNonPcmAutoMode", sl_auto_mode),
+      ("SpeedLimitHybridOffset", sl_hybrid_offset),
+      ("CurvaturePidLaneGate", pid_lane_gate),
       ("ShowDynamicSteeringLearnerGraph", show_curvatured_graph),
     )
 
