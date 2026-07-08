@@ -38,6 +38,8 @@ class Controls(ControlsExt):
   def __init__(self) -> None:
     self.params = Params()
     self.param_counter = 0
+    self.lane_conf_filtered = 1.0   # TIGUAN: lane-confidence PID gate state
+    self.lane_conf_ok = True        # TIGUAN: lane-confidence PID gate state
     cloudlog.info("controlsd is waiting for CarParams")
     self.CP = messaging.log_from_bytes(self.params.get("CarParams", block=True), car.CarParams)
     cloudlog.info("controlsd got CarParams")
@@ -111,6 +113,26 @@ class Controls(ControlsExt):
       self.force_rhd_for_bsm = self.params.get_bool("ForceRHDForBSM")
       self.enable_long_comfort_mode = self.params.get_bool("EnableLongComfortMode")
       self.disable_car_steer_alerts = self.params.get_bool("DisableCarSteerAlerts")
+
+    # TIGUAN: gate the curvature PID on lane-line confidence (runs every frame, after the 1s param
+    # refresh above so this always wins). At intersections the lane lines vanish and the model
+    # *guesses* a path; the PID then amplifies the guess by stacking error correction on top of
+    # feedforward (observed 2x command vs model desire, lunging toward a curb). Precision
+    # correction is only appropriate when the model actually sees the lane: drop to pure
+    # feedforward while inner-lane-line confidence is low (EMA + hysteresis).
+    if self.sm.updated['modelV2']:
+      probs = self.sm['modelV2'].laneLineProbs
+      if len(probs) >= 3:
+        # max(): NA roads chronically lack a right-side painted line (right prob ~0.1 everywhere),
+        # so "at least one inner line well-seen" is the meaningful confidence signal
+        conf = max(probs[1], probs[2])
+        self.lane_conf_filtered = 0.9 * self.lane_conf_filtered + 0.1 * conf
+    if self.lane_conf_ok:
+      self.lane_conf_ok = self.lane_conf_filtered > 0.55
+    else:
+      self.lane_conf_ok = self.lane_conf_filtered > 0.70
+    if self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
+      self.LaC.set_pid_enabled(self.enable_curvature_controller and self.lane_conf_ok)
   
   def state_control(self):
     CS = self.sm['carState']
