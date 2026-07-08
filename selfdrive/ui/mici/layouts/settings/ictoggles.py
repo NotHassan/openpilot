@@ -1,9 +1,7 @@
-from cereal import log
 
 from openpilot.system.ui.widgets.scroller import NavScroller
-from openpilot.selfdrive.ui.mici.widgets.button import BigParamControl, BigMultiParamToggle
+from openpilot.selfdrive.ui.mici.widgets.button import BigParamControl
 from openpilot.system.ui.lib.application import gui_app
-from openpilot.selfdrive.ui.layouts.settings.common import restart_needed_callback
 from openpilot.selfdrive.ui.ui_state import ui_state
 
 
@@ -25,7 +23,7 @@ class ICTogglesLayoutMici(NavScroller):
     enable_accel_bar            = BigParamControl("Enable Accel Bar", "ShowAccelBar")
     enable_curvatured           = BigParamControl("Enable Dynamic Steering Learner", "EnableCurvatureD")
     show_curvatured_graph       = BigParamControl("Show Dynamic Steering Learner Graph", "ShowDynamicSteeringLearnerGraph")
-    
+
     self._scroller.add_widgets([
       enable_curvature_correction,
       enable_long_comfort_mode,

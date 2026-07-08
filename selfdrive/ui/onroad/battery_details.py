@@ -16,14 +16,14 @@ class BatteryPanelConfig:
   line_height: int = 48            # Basis-Zeilenhöhe
   label_width: int = 320
   text_margin: int = 25            # Abstand Label → Wert
-  
+
 CONFIG = BatteryPanelConfig()
 
 class BatteryDetails(Widget):
   def __init__(self) -> None:
     super().__init__()
     self._params = Params()
-    
+
     self._capacity: float = 0.0
     self._charge: float = 0.0
     self._soc: float = 0.0
@@ -37,26 +37,26 @@ class BatteryDetails(Widget):
     self._panel_bg: rl.Color = rl.Color(0, 0, 0, 128)
     self._label_color: rl.Color = rl.Color(220, 220, 220, 255)
     self._value_color: rl.Color = rl.Color(255, 255, 255, 255)
-    
+
     self._display_enabled: bool = False
     self._param_update_time: float = 0.0
-    
+
     self._update_params()
 
   def _update_state(self) -> None:
     if time.monotonic() - self._param_update_time > 2.0:
       self._update_params()
-    
+
     if not self._display_enabled:
       return
-      
+
     sm = ui_state.sm
     if sm.recv_frame["carState"] < ui_state.started_frame:
       self._reset_values()
       return
 
     car_state = sm["carState"]
-    
+
     battery_data = car_state.batteryDetails
     self._capacity      = float(battery_data.capacity)
     self._charge        = float(battery_data.charge)
@@ -66,11 +66,11 @@ class BatteryDetails(Widget):
     self._voltage       = float(battery_data.voltage)
     self._current       = float(battery_data.current)
     self._power         = float(battery_data.power)
-    
+
   def _update_params(self) -> None:
     self._param_update_time = time.monotonic()
     self._display_enabled = self._params.get_bool("BatteryDetails")
-    
+
   def _reset_values(self) -> None:
     self._capacity = 0.0
     self._charge = 0.0
@@ -103,7 +103,6 @@ class BatteryDetails(Widget):
     label_width = CONFIG.label_width
     text_margin = CONFIG.text_margin
     column_spacing = panel_width // 2 - 40
-    value_width = column_spacing - label_width - text_margin
 
     labels = [
       "Capacity:", "Charge:", "SoC:", "Temperature:",
@@ -121,9 +120,7 @@ class BatteryDetails(Widget):
       f"{self._power:.2f} kW",
     ]
 
-    rl.draw_text_ex
-
-    for i, (label, value) in enumerate(zip(labels, values)):
+    for i, (label, value) in enumerate(zip(labels, values, strict=True)):
       column = i // 4
       row = i % 4
 

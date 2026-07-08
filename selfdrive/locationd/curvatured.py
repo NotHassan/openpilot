@@ -544,7 +544,7 @@ class CurvatureEstimator(CurvatureDLookup):
     self._restore_cached_params()
     self.update_use_params(force=True)
 
-    cloudlog.info(f"curvatured init brand={self.CP.brand} fingerprint={self.CP.carFingerprint} "
+    cloudlog.info(f"curvatured init brand={self.CP.brand} fingerprint={self.CP.carFingerprint} " +
                   f"steerControlType={self.CP.steerControlType} history={HISTORY:.2f}s")
 
   @staticmethod
@@ -590,8 +590,8 @@ class CurvatureEstimator(CurvatureDLookup):
       self.use_params = self.enable_curvatured and self.CP.brand in ALLOWED_CARS and \
                         self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED
       if self.prev_use_params != self.use_params:
-        cloudlog.info(f"curvatured use_params={self.use_params} toggle={self.enable_curvatured} "
-                      f"brand={self.CP.brand} allowed={self.CP.brand in ALLOWED_CARS} "
+        cloudlog.info(f"curvatured use_params={self.use_params} toggle={self.enable_curvatured} " +
+                      f"brand={self.CP.brand} allowed={self.CP.brand in ALLOWED_CARS} " +
                       f"steerControlType={self.CP.steerControlType}")
         self.prev_use_params = self.use_params
       if not self.use_params:
@@ -936,11 +936,11 @@ class CurvatureEstimator(CurvatureDLookup):
     self.last_status_log_t = t
 
     checks = sm.all_checks(tracked_services) if valid is None else valid
-    cloudlog.info(f"curvatured status use_params={self.use_params} checks={checks} "
-                  f"lag={self.lag:.3f} total_points={int(round(float(self.counts.sum())))} "
-                  f"bucket={self.current_bucket} bucket_points={self.current_bucket_points} "
-                  f"corr={self.current_correction:.8f} cal={self.calibration_percent(self.counts)} "
-                   f"invalid={invalid} not_alive={not_alive}")
+    cloudlog.info(f"curvatured status use_params={self.use_params} checks={checks} " +
+                  f"lag={self.lag:.3f} total_points={int(round(float(self.counts.sum())))} " +
+                  f"bucket={self.current_bucket} bucket_points={self.current_bucket_points} " +
+                  f"corr={self.current_correction:.8f} cal={self.calibration_percent(self.counts)} " +
+                  f"invalid={invalid} not_alive={not_alive}")
 
 
 def main():

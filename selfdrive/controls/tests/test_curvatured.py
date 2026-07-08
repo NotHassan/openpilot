@@ -192,10 +192,12 @@ class TestCurvatureDController:
     msg.liveCurvatureParameters.biases = [0.0] * CurvatureDLookup.total_size()
 
     outer_idx = len(CurvatureDLookup.CURVATURE_BUCKET_CENTERS) - 1
-    self._set_curve(msg, 3, {outer_idx: 8.0e-5})
+    # speed anchor 1: the outer bucket edge (and its fade zone) stay under MAX_LAT_ACCEL_APPLY;
+    # at anchor 3 the edge is ~2 m/s^2 and the safety bound correctly zeroes the correction
+    self._set_curve(msg, 1, {outer_idx: 8.0e-5})
     controller.update_live_params(msg.liveCurvatureParameters)
 
-    v_ego = float(CurvatureDLookup.SPEED_ANCHORS[3])
+    v_ego = float(CurvatureDLookup.SPEED_ANCHORS[1])
     last_edge = float(CurvatureDLookup.CURVATURE_BUCKET_MAX)
     fade_mid = 0.5 * (last_edge + float(CurvatureDLookup.CURVATURE_MAX))
 
@@ -229,10 +231,10 @@ class TestCurvatureDController:
     # Wrap the source to count calls
     call_count = {"n": 0}
     original = CurvatureDLookup.interp_curve_value
-    def counting(*args, **kwargs):
+    def counting(cls, *args, **kwargs):  # classmethod-wrapped: plain assignment would inject cls twice
       call_count["n"] += 1
       return original(*args, **kwargs)
-    CurvatureDLookup.interp_curve_value = counting
+    CurvatureDLookup.interp_curve_value = classmethod(counting)
     try:
       # First call: cache miss, calls interp_curve_value once
       first = controller.get_correction(32e-6, v_ego)
@@ -243,17 +245,22 @@ class TestCurvatureDController:
         assert cached == first
       assert call_count["n"] == 1
 
-      # v_ego noise below quantization must still hit the cache
+      # v_ego noise below quantization must still hit the cache. Perturb from the QUANTIZED
+      # base by 0.4 steps: a half-step from an arbitrary value can cross the rounding boundary
+      # (e.g. 22.2222 + 0.05 rounds to 22.3), which is a cache miss by design.
       v_ego_step = 10 ** -CACHE_V_EGO_DECIMALS
-      noised = controller.get_correction(32e-6, v_ego + v_ego_step * 0.5)
-      assert noised == first
-      assert call_count["n"] == 1
+      v_ego_q = round(v_ego, CACHE_V_EGO_DECIMALS)
+      first_q = controller.get_correction(32e-6, v_ego_q)
+      calls_after_q = call_count["n"]
+      noised = controller.get_correction(32e-6, v_ego_q + v_ego_step * 0.4)
+      assert noised == first_q
+      assert call_count["n"] == calls_after_q
 
       # Curvature noise below quantization must still hit the cache
       curvature_step = 10 ** -CACHE_CURVATURE_DECIMALS
-      noised = controller.get_correction(32e-6 + curvature_step * 0.5, v_ego)
-      assert noised == first
-      assert call_count["n"] == 1
+      noised = controller.get_correction(32e-6 + curvature_step * 0.4, v_ego_q)
+      assert noised == first_q
+      assert call_count["n"] == calls_after_q
     finally:
       CurvatureDLookup.interp_curve_value = original
 

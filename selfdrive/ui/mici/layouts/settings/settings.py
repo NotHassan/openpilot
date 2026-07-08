@@ -23,11 +23,11 @@ class SettingsLayout(NavScroller):
     toggles_panel = TogglesLayoutMici()
     toggles_btn = SettingsBigButton("toggles", "", gui_app.texture("icons_mici/settings.png", 64, 64))
     toggles_btn.set_click_callback(lambda: gui_app.push_widget(toggles_panel))
-    
+
     ictoggles_panel = ICTogglesLayoutMici()
     ictoggles_btn = SettingsBigButton("ictoggles", "", gui_app.texture("icons_mici/settings.png", 64, 64))
     ictoggles_btn.set_click_callback(lambda: gui_app.push_widget(ictoggles_panel))
-    
+
     network_panel = NetworkLayoutMici()
     network_btn = SettingsBigButton("network", "", gui_app.texture("icons_mici/settings/network/wifi_strength_full.png", 76, 56))
     network_btn.set_click_callback(lambda: gui_app.push_widget(network_panel))

@@ -32,7 +32,7 @@ def get_max_accel(v_ego):
 
 def get_coast_accel(pitch):
   return np.sin(pitch) * -5.65 - 0.3  # fitted from data using xx/projects/allow_throttle/compute_coast_accel.py
-  
+
 
 def get_lead_distance(radarState):
   if radarState.leadOne.status and (not radarState.leadTwo.status or radarState.leadOne.dRel < radarState.leadTwo.dRel):
@@ -40,7 +40,7 @@ def get_lead_distance(radarState):
   if radarState.leadTwo.status:
     return radarState.leadTwo.dRel
   return 0
-  
+
 
 def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
   """

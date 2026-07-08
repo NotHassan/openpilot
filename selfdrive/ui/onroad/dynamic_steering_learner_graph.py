@@ -275,17 +275,17 @@ class DynamicSteeringLearnerGraph(Widget):
     rl.draw_text_ex(self._font_bold, title, rl.Vector2(text_x, title_y), title_size, 0, self._text_color)
 
     status_text = (
-      f"live={payload_valid} transport={transport_valid} cal={int(getattr(lcp, 'calPerc', 0))}% "
+      f"live={payload_valid} transport={transport_valid} cal={int(getattr(lcp, 'calPerc', 0))}% " +
       f"points={int(getattr(lcp, 'totalBucketPoints', 0))}"
     )
     rl.draw_text_ex(self._font_medium, status_text, rl.Vector2(text_x, status_y), status_size, 0, self._muted_text_color)
 
     speed_mix = (
-      f"v={v_ego * 3.6:.0f} km/h  mix={CurvatureDLookup.SPEED_ANCHORS[low_idx] * 3.6:.0f}/"
+      f"v={v_ego * 3.6:.0f} km/h  mix={CurvatureDLookup.SPEED_ANCHORS[low_idx] * 3.6:.0f}/" +
       f"{CurvatureDLookup.SPEED_ANCHORS[high_idx] * 3.6:.0f} alpha={alpha:.2f}"
     )
     marker_info = (
-      f"k={desired_curvature:.2e}  corr={display_correction:.2e}  "
+      f"k={desired_curvature:.2e}  corr={display_correction:.2e}  " +
       f"bucket=({int(getattr(lcp, 'bucketSpeed', -1))}, {int(getattr(lcp, 'bucketCurvature', -1))})"
     )
     rl.draw_text_ex(self._font_medium, speed_mix, rl.Vector2(text_x, footer_y1), footer_size, 0, self._muted_text_color)

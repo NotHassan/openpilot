@@ -19,7 +19,7 @@
 #  def reset(self):
 #    super().reset()
 #    self.pid.reset()
-#  
+#
 #  def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, calibrated_pose, curvature_limited):
 #    pid_log = log.ControlsState.LateralCurvatureState.new_message()
 #    if not active:
@@ -35,10 +35,10 @@
 #      actual_curvature = np.interp(CS.vEgo, [2.0, 5.0], [actual_curvature_vm, actual_curvature_pose])
 #
 #      desired_curvature_corr = desired_curvature - roll_compensation
-#      
+#
 #      pid_log.error = float(desired_curvature - actual_curvature)
 #      freeze_integrator = steer_limited_by_safety or CS.vEgo < 5 or CS.steeringPressed
-#      
+#
 #      pid_curvature = self.pid.update(pid_log.error, feedforward=desired_curvature_corr, speed=CS.vEgo,
 #                                      freeze_integrator=freeze_integrator, override=CS.steeringPressed)
 #

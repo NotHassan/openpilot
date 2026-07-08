@@ -89,8 +89,8 @@ def print_bucket_details(counts: np.ndarray, biases: np.ndarray, corrections: np
     bucket_corr = float(corrections[speed_idx, curvature_idx])
     bucket_valid = bool(fit_valid[speed_idx, curvature_idx])
     print(
-      f"    {marker} idx={curvature_idx} range={bucket_range} "
-      f"points={bucket_points} fitValid={bucket_valid} "
+      f"    {marker} idx={curvature_idx} range={bucket_range} " +
+      f"points={bucket_points} fitValid={bucket_valid} " +
       f"bias={bucket_bias:.8f} corr={bucket_corr:.8f}"
     )
 
@@ -118,7 +118,8 @@ def print_message_summary(title: str, payload) -> None:
   for speed_idx in range(len(CurvatureDLookup.SPEED_ANCHORS)):
     speed_counts = counts[speed_idx]
     speed_valid = CurvatureDLookup.speed_curve_valid(counts, speed_idx) if has_debug_arrays else bool(np.any(fit_valid[speed_idx]))
-    valid_bucket_count = int(np.count_nonzero(speed_counts >= CurvatureDLookup.MIN_BUCKET_POINTS)) if has_debug_arrays else int(np.count_nonzero(fit_valid[speed_idx]))
+    valid_bucket_count = int(np.count_nonzero(speed_counts >= CurvatureDLookup.MIN_BUCKET_POINTS)) if has_debug_arrays else \
+                         int(np.count_nonzero(fit_valid[speed_idx]))
     total_points = int(round(float(speed_counts.sum()))) if has_debug_arrays else int(np.count_nonzero(fit_valid[speed_idx]))
     if total_points == 0 and not speed_valid:
       continue
@@ -133,9 +134,9 @@ def print_message_summary(title: str, payload) -> None:
     if int(payload.bucketSpeed) == speed_idx and int(payload.bucketCurvature) >= 0:
       focus_idx = int(payload.bucketCurvature)
     speed_entries.append((speed_idx, focus_idx,
-      f"  {speed_label(speed_idx)}: valid={speed_valid} total={total_points} "
-      f"validBuckets={valid_bucket_count} fitPoints={fit_points} "
-      f"topBucket={best_idx} ({best_bucket}) points={best_points} "
+      f"  {speed_label(speed_idx)}: valid={speed_valid} total={total_points} " +
+      f"validBuckets={valid_bucket_count} fitPoints={fit_points} " +
+      f"topBucket={best_idx} ({best_bucket}) points={best_points} " +
       f"bias={best_bias:.8f} corr={best_corr:.8f}")
     )
 

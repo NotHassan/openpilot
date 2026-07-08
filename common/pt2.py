@@ -34,7 +34,7 @@ class PT2Filter:
 
     => Zeitbereich: y[k] = -a1*y[k-1] - a2*y[k-2] + b0*u[k] + b1*u[k-1] + b2*u[k-2].
     """
-        
+
     Ts = dt
     wd = w0
     alpha = 2.0 / Ts
@@ -66,14 +66,14 @@ class PT2Filter:
     return (a1d, a2d, b0d, b1d, b2d)
 
   def sync(self, target: float):
-    steps = compute_saturation_steps(self.w0, self.zeta, self.dt)
-    for i in range(1, steps + 1):
-      update(target)
+    steps = self.compute_saturation_steps(self.w0, self.zeta, self.dt)
+    for _ in range(steps):
+      self.update(target)
 
   def compute_saturation_steps(self, w0: float, zeta: float, dt: float) -> int:
     """
     Berechnet eine Abschätzung der Schritte, bis der Filter (95% des Endwerts) erreicht ist.
-    
+
     Wir nutzen hier die Abschätzung:
         T_s = 4 / (zeta * w0)
     und setzen N = T_s / dt.
@@ -103,10 +103,10 @@ class PT2Filter:
         + self.b1 * self.u1
         + self.b2 * self.u2
     )
-        
+
     self.y2 = self.y1
     self.y1 = y
     self.u2 = self.u1
     self.u1 = u
-        
+
     return y

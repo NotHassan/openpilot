@@ -1,5 +1,4 @@
 import math
-import numpy as np
 
 from cereal import log
 from openpilot.common.pid import MultiplicativeUnwindPID
@@ -25,7 +24,7 @@ class LatControlCurvature(LatControl):
     else:
       self.pid = None
       self.kf = 1.
-      
+
   def set_pid_enabled(self, enabled: bool) -> None:
     self.enable_pid = enabled
 
