@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+export PARAMS_ROOT="${PARAMS_ROOT:-/data/params}"  # explicit: container-built artifacts default to the PC path otherwise
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
