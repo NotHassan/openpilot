@@ -38,6 +38,14 @@ LIMIT_MIN_ACC = -1.5  # m/s^2 Maximum deceleration allowed for limit controllers
 LIMIT_MAX_ACC = 1.0   # m/s^2 Maximum acceleration allowed for limit controllers to provide while active.
 LIMIT_MIN_SPEED = 8.33  # m/s, Minimum speed limit to provide as solution on limit controllers.
 LIMIT_SPEED_OFFSET_TH = -1.  # m/s Maximum offset between speed limit and current speed for adapting state.
+
+# TIGUAN auto mode (non-PCM-long / ICBM cars): fully automatic, zero confirmations, user-first.
+#  - the user's manual setpoint is law for the CURRENT zone: overriding pauses the assist and
+#    records the zone's limit; re-announcements of the same limit (incl. through nav dropouts)
+#    never re-assert
+#  - an actual zone-value change re-engages automatically at limit+offset, no confirmation
+#  - on initial engage, the user's chosen setpoint is respected until the first zone change
+TIGUAN_AUTO_MODE = True
 V_CRUISE_UNSET = 255.
 
 CRUISE_BUTTONS_PLUS = (ButtonType.accelCruise, ButtonType.resumeCruise)
@@ -87,6 +95,7 @@ class SpeedLimitAssist:
     self.state = SpeedLimitAssistState.disabled
     self._state_prev = SpeedLimitAssistState.disabled
     self.pcm_op_long = CP.openpilotLongitudinalControl and CP.pcmCruise
+    self.override_limit_conv = -1   # TIGUAN auto mode: zone value (conv units) the user overrode in; -1 = none
 
     self._plus_hold = 0.
     self._minus_hold = 0.
@@ -359,6 +368,49 @@ class SpeedLimitAssist:
 
     return enabled, active
 
+  def _limit_conv(self) -> int:
+    speed_conv = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
+    return round(self._speed_limit * speed_conv) if self._has_speed_limit else -1
+
+  def _expected_walk_change(self) -> bool:
+    # a cluster change moving toward the current target is our own ICBM walking, not the user
+    return abs(self.v_cruise_cluster_conv - self.target_set_speed_conv) < \
+           abs(self.prev_v_cruise_cluster_conv - self.prev_target_set_speed_conv)
+
+  def update_state_machine_non_pcm_auto(self):
+    # TIGUAN auto mode -- see TIGUAN_AUTO_MODE above. States used: active / inactive / disabled.
+    self.long_engaged_timer = max(0, self.long_engaged_timer - 1)
+    limit_conv = self._limit_conv()
+
+    if self.state != SpeedLimitAssistState.disabled:
+      if not self.long_enabled or not self.enabled:
+        self.state = SpeedLimitAssistState.disabled
+
+      elif self.state == SpeedLimitAssistState.active:
+        if self.v_cruise_cluster_changed and not self._expected_walk_change():
+          # the user spoke: their setpoint is law for this zone
+          self.state = SpeedLimitAssistState.inactive
+          self.override_limit_conv = limit_conv
+        # limit changes while active need no transition: the target updates and ICBM walks
+
+      else:  # inactive (and any other non-active holdover)
+        if limit_conv > 0 and self.override_limit_conv <= 0:
+          self.override_limit_conv = limit_conv  # engaged before a zone was known: baseline it
+        elif limit_conv > 0 and limit_conv != self.override_limit_conv:
+          self.state = SpeedLimitAssistState.active  # real zone change: structure takes over
+
+    elif self.long_enabled and self.enabled:
+      if not self.long_enabled_prev:
+        self.long_engaged_timer = int(DISABLED_GUARD_PERIOD / DT_MDL)
+      elif self.long_engaged_timer <= 0:
+        # respect the setpoint the user engaged with, until the first zone change
+        self.state = SpeedLimitAssistState.inactive
+        self.override_limit_conv = limit_conv
+
+    enabled = self.state in ENABLED_STATES
+    active = self.state in ACTIVE_STATES
+    return enabled, active
+
   def update_events(self, events_sp: EventsSP) -> None:
     if self.state == SpeedLimitAssistState.preActive:
       events_sp.add(EventNameSP.speedLimitPreActive)
@@ -395,6 +447,8 @@ class SpeedLimitAssist:
     self._state_prev = self.state
     if self.pcm_op_long:
       self.is_enabled, self.is_active = self.update_state_machine_pcm_op_long()
+    elif TIGUAN_AUTO_MODE:
+      self.is_enabled, self.is_active = self.update_state_machine_non_pcm_auto()
     else:
       self.is_enabled, self.is_active = self.update_state_machine_non_pcm_long()
 
