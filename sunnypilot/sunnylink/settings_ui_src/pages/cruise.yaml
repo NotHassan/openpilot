@@ -210,6 +210,22 @@ sections:
         key: SpeedLimitOffsetType
         op: '>'
         value: 0
+    - key: SpeedLimitHybridOffset
+      widget: toggle
+      title: 'Speed Limit Offset: Hybrid'
+      description: With a fixed offset, apply half the offset below 60 km/h (e.g. +20 gives 40 zone -> 50, 100 zone -> 120).
+      visibility:
+      - type: param_compare
+        key: SpeedLimitOffsetType
+        op: '>='
+        value: 1
+    - key: SpeedLimitNonPcmAutoMode
+      widget: toggle
+      title: 'Speed Limit Assist: Auto Mode'
+      description: Fully automatic assist for stock-longitudinal cars. No confirmations; zone changes auto-apply; a manual
+        setpoint change is respected for the current zone and the structure resumes at the next zone change.
+      enablement:
+      - $ref: '#/macros/offroad'
 - id: smart_cruise
   title: Smart Cruise Control
   description: ''

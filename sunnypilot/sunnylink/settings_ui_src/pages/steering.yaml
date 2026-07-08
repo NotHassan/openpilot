@@ -41,6 +41,13 @@ sections:
       enablement:
       - $ref: '#/macros/offroad'
       - $ref: '#/macros/mads_full_platforms'
+    - key: MadsPauseLateralOnHandsOn
+      widget: toggle
+      title: Pause Steering On Hands-On
+      description: Pause lateral control while hands are detected on the steering wheel (capacitive touch or sustained
+        torque); resume shortly after release. Requires a capacitive steering wheel for touch detection.
+      enablement:
+      - $ref: '#/macros/offroad'
     - key: MadsSteeringMode
       widget: multiple_button
       title: Steering Mode on Brake Pedal
@@ -92,6 +99,17 @@ sections:
       - type: param
         key: BlinkerPauseLateralControl
         equals: true
+- id: curvature
+  title: Curvature Control
+  description: ''
+  items:
+  - key: CurvaturePidLaneGate
+    widget: toggle
+    title: 'Curvature PID: Lane Confidence Gate'
+    description: Disable curvature PID error amplification while lane line confidence is low (e.g. crossing intersections),
+      falling back to pure feedforward so path guesses stay gentle. Only used on curvature-based steering paths.
+    enablement:
+    - $ref: '#/macros/offroad'
 - id: torque
   title: Torque Control
   description: Steering torque tuning and lateral control method

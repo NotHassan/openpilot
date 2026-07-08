@@ -123,6 +123,17 @@
                   ]
                 },
                 {
+                  "key": "MadsPauseLateralOnHandsOn",
+                  "widget": "toggle",
+                  "title": "Pause Steering On Hands-On",
+                  "description": "Pause lateral control while hands are detected on the steering wheel (capacitive touch or sustained torque); resume shortly after release. Requires a capacitive steering wheel for touch detection.",
+                  "enablement": [
+                    {
+                      "type": "offroad_only"
+                    }
+                  ]
+                },
+                {
                   "key": "MadsSteeringMode",
                   "widget": "multiple_button",
                   "title": "Steering Mode on Brake Pedal",
@@ -263,6 +274,24 @@
                       "equals": true
                     }
                   ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "curvature",
+          "title": "Curvature Control",
+          "description": "",
+          "items": [
+            {
+              "key": "CurvaturePidLaneGate",
+              "widget": "toggle",
+              "title": "Curvature PID: Lane Confidence Gate",
+              "description": "Disable curvature PID error amplification while lane line confidence is low (e.g. crossing intersections), falling back to pure feedforward so path guesses stay gentle. Only used on curvature-based steering paths.",
+              "enablement": [
+                {
+                  "type": "offroad_only"
                 }
               ]
             }
@@ -909,6 +938,31 @@
                       "key": "SpeedLimitOffsetType",
                       "op": ">",
                       "value": 0
+                    }
+                  ]
+                },
+                {
+                  "key": "SpeedLimitHybridOffset",
+                  "widget": "toggle",
+                  "title": "Speed Limit Offset: Hybrid",
+                  "description": "With a fixed offset, apply half the offset below 60 km/h (e.g. +20 gives 40 zone -> 50, 100 zone -> 120).",
+                  "visibility": [
+                    {
+                      "type": "param_compare",
+                      "key": "SpeedLimitOffsetType",
+                      "op": ">=",
+                      "value": 1
+                    }
+                  ]
+                },
+                {
+                  "key": "SpeedLimitNonPcmAutoMode",
+                  "widget": "toggle",
+                  "title": "Speed Limit Assist: Auto Mode",
+                  "description": "Fully automatic assist for stock-longitudinal cars. No confirmations; zone changes auto-apply; a manual setpoint change is respected for the current zone and the structure resumes at the next zone change.",
+                  "enablement": [
+                    {
+                      "type": "offroad_only"
                     }
                   ]
                 }
