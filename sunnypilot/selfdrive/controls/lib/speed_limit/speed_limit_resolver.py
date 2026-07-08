@@ -96,11 +96,21 @@ class SpeedLimitResolver:
       self.offset_type = self.params.get("SpeedLimitOffsetType", return_default=True)
       self.offset_value = self.params.get("SpeedLimitValueOffset", return_default=True)
 
+  # TIGUAN: hybrid offset -- a fixed +N is right on highways (100 -> 120) but aggressive in town
+  # (50 -> 70), while a percentage is right in town (50 -> 60) but drifts on highways. When the
+  # offset type is 'fixed' and the limit is below the threshold, apply the value as a percentage
+  # instead. offset_value=20: 50->60, 60->72, 80->100, 100->120.
+  HYBRID_FIXED_OFFSET = True
+  HYBRID_THRESHOLD = {True: 75, False: 45}  # km/h / mph: fixed at/above, percentage below
+
   def _get_speed_limit_offset(self) -> float:
     if self.offset_type == OffsetType.off:
       return 0
     elif self.offset_type == OffsetType.fixed:
-      return float(self.offset_value * (CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS))
+      speed_conv = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
+      if self.HYBRID_FIXED_OFFSET and 0 < self.speed_limit < self.HYBRID_THRESHOLD[self.is_metric] * speed_conv:
+        return float(self.offset_value * 0.01 * self.speed_limit)
+      return float(self.offset_value * speed_conv)
     elif self.offset_type == OffsetType.percentage:
       return float(self.offset_value * 0.01 * self.speed_limit)
     else:
