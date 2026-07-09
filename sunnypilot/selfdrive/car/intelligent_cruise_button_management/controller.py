@@ -18,6 +18,7 @@ SendButtonState = custom.IntelligentCruiseButtonManagement.SendButtonState
 
 ALLOWED_SPEED_THRESHOLD = 1.8  # m/s, ~4 MPH
 SPEED_LIMIT_ONLY_MAX_MS = 90.0  # above this (V_CRUISE_UNSET=255) means the speed-limit assist has no target
+BRAKE_ASSIST_DEADBAND_MS = 1.4  # ~5 km/h: plan must want to slow this far below the limit target to brake early
 HYST_GAP = 0.0  # currently disabled; TODO-SP: might need to be brand-specific
 INACTIVE_TIMER = 0.4
 
@@ -50,6 +51,7 @@ class IntelligentCruiseButtonManagement:
     self.params = Params()
     self.param_frame = 0
     self.speed_limit_only = self._read_speed_limit_only()
+    self.brake_assist = self._read_bool("IcbmBrakeAssist")
 
     self.cruise_button_timers = CRUISE_BUTTON_TIMER
 
@@ -67,7 +69,14 @@ class IntelligentCruiseButtonManagement:
       # When there's no active speed-limit target, hold at the current setpoint so the ICBM stays
       # idle (no button presses) and the stock ACC owns speed -- including all lead following.
       sla_v = LP_SP.speedLimit.assist.vTarget
-      source_v = sla_v if sla_v < SPEED_LIMIT_ONLY_MAX_MS else CS.cruiseState.speedCluster
+      limit_target = sla_v if sla_v < SPEED_LIMIT_ONLY_MAX_MS else CS.cruiseState.speedCluster
+      # Brake assist: when the full plan wants to slow meaningfully below the limit target (a
+      # decelerating lead / slowdown ahead), follow the plan DOWN so the stock ACC starts braking
+      # earlier than its own late-and-hard reaction. Restores to the known limit target after.
+      if self.brake_assist and LP_SP.vTarget < limit_target - BRAKE_ASSIST_DEADBAND_MS:
+        source_v = LP_SP.vTarget
+      else:
+        source_v = limit_target
     else:
       source_v = LP_SP.vTarget
 
@@ -130,13 +139,16 @@ class IntelligentCruiseButtonManagement:
 
     self.is_ready = ready and not button_pressed
 
-  def _read_speed_limit_only(self) -> bool:
+  def _read_bool(self, key: str) -> bool:
     # defensive: the param may be absent from an out-of-sync params registry on a source install
-    # that hasn't rebuilt the params library yet; fall back to stock plan-following.
+    # that hasn't rebuilt the params library yet.
     try:
-      return self.params.get_bool("IcbmSpeedLimitOnly")
+      return self.params.get_bool(key)
     except Exception:
       return False
+
+  def _read_speed_limit_only(self) -> bool:
+    return self._read_bool("IcbmSpeedLimitOnly")
 
   def run(self, CS: car.CarState, CC: car.CarControl, LP_SP: custom.LongitudinalPlanSP, is_metric: bool) -> None:
     if self.CP_SP.pcmCruiseSpeed:
@@ -147,6 +159,7 @@ class IntelligentCruiseButtonManagement:
     self.param_frame += 1
     if self.param_frame % 100 == 0:
       self.speed_limit_only = self._read_speed_limit_only()
+      self.brake_assist = self._read_bool("IcbmBrakeAssist")
 
     self.update_calculations(CS, LP_SP)
     self.update_readiness(CS, CC)

@@ -28,6 +28,7 @@ class ICTogglesLayoutMici(NavScroller):
     sl_hybrid_offset            = BigParamControl("Speed Limit Offset: Hybrid", "SpeedLimitHybridOffset")
     pid_lane_gate               = BigParamControl("Curvature PID: Lane Confidence Gate", "CurvaturePidLaneGate")
     icbm_sl_only                = BigParamControl("Cruise Buttons: Speed Limit Only", "IcbmSpeedLimitOnly")
+    icbm_brake_assist           = BigParamControl("Cruise Buttons: Early Brake Assist", "IcbmBrakeAssist")
 
     self._scroller.add_widgets([
       enable_curvature_correction,
@@ -48,6 +49,7 @@ class ICTogglesLayoutMici(NavScroller):
       sl_hybrid_offset,
       pid_lane_gate,
       icbm_sl_only,
+      icbm_brake_assist,
       show_curvatured_graph,
     ])
 
@@ -71,6 +73,7 @@ class ICTogglesLayoutMici(NavScroller):
       ("SpeedLimitHybridOffset", sl_hybrid_offset),
       ("CurvaturePidLaneGate", pid_lane_gate),
       ("IcbmSpeedLimitOnly", icbm_sl_only),
+      ("IcbmBrakeAssist", icbm_brake_assist),
       ("ShowDynamicSteeringLearnerGraph", show_curvatured_graph),
     )
 
