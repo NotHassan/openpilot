@@ -35,6 +35,10 @@ PALM_TORQUE_HOLD = 40           # 0.4 Nm -- to HOLD a pause (no assist while pau
                                 #           so even light palm guidance mid-turn keeps lateral paused)
 PALM_TORQUE_PAUSE_FRAMES = 50   # ~0.5s at 100Hz of sustained torque before pausing
 HANDS_OFF_RESUME_FRAMES = 50    # ~0.5s at 100Hz with neither before lateral resumes
+# During a lane change the driver holds/nudges to guide the car over, so touch and gentle torque
+# must NOT pause (that cut steering out mid-maneuver). But a firm, deliberate grab still hands
+# control over -- so require a real takeover push while a lane change is active.
+LANE_CHANGE_TAKEOVER_TORQUE = 250  # 2.5 Nm sustained -> deliberate takeover during a lane change
 
 
 class ModularAssistiveDrivingSystem:
@@ -222,18 +226,20 @@ class ModularAssistiveDrivingSystem:
     # TIGUAN: sustained touch OR sustained torque (palm steering) pauses lateral;
     # counters also feed should_silent_lkas_enable
     if self.pause_on_hands_on:
-      # Never pause during a lane change: the driver holds/nudges the wheel to guide the car over,
-      # and pausing lateral mid-maneuver is jerky and unsafe. Let the assist finish the lane change.
+      # During a lane change the driver holds/nudges the wheel to guide it, so touch and gentle
+      # torque must not pause (that cut steering out mid-maneuver). A firm deliberate grab still
+      # takes over: while a lane change is active only >2.5 Nm sustained pauses, touch is ignored.
       lane_change_active = False
       if self.selfdrive.sm.seen['modelV2']:
         lane_change_active = self.selfdrive.sm['modelV2'].meta.laneChangeState != LaneChangeState.off
+      pause_torque = LANE_CHANGE_TAKEOVER_TORQUE if lane_change_active else PALM_TORQUE
       touch = CS.steeringSlightlyPressed and not lane_change_active
-      palm = abs(CS.steeringTorque) > PALM_TORQUE and not lane_change_active
+      palm = abs(CS.steeringTorque) > pause_torque
       holding = abs(CS.steeringTorque) > PALM_TORQUE_HOLD  # light contact counts toward *staying* paused
       self.hands_on_frames = self.hands_on_frames + 1 if touch else 0
       self.palm_frames = self.palm_frames + 1 if palm else 0
       self.hands_off_frames = 0 if (touch or holding) else self.hands_off_frames + 1
-      if self.enabled and not lane_change_active and (self.hands_on_frames >= HANDS_ON_PAUSE_FRAMES or self.palm_frames >= PALM_TORQUE_PAUSE_FRAMES):
+      if self.enabled and (self.hands_on_frames >= HANDS_ON_PAUSE_FRAMES or self.palm_frames >= PALM_TORQUE_PAUSE_FRAMES):
         self.transition_paused_state()
 
     if self.should_silent_lkas_enable(CS):
