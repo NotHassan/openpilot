@@ -7,6 +7,7 @@ See the LICENSE.md file in the root directory for more details.
 
 from cereal import log, custom
 LaneChangeState = log.LaneChangeState
+LaneChangeDirection = log.LaneChangeDirection
 
 from opendbc.car import structs
 from opendbc.car.hyundai.values import HyundaiFlags
@@ -35,10 +36,14 @@ PALM_TORQUE_HOLD = 40           # 0.4 Nm -- to HOLD a pause (no assist while pau
                                 #           so even light palm guidance mid-turn keeps lateral paused)
 PALM_TORQUE_PAUSE_FRAMES = 50   # ~0.5s at 100Hz of sustained torque before pausing
 HANDS_OFF_RESUME_FRAMES = 50    # ~0.5s at 100Hz with neither before lateral resumes
-# During a lane change the driver holds/nudges to guide the car over, so touch and gentle torque
-# must NOT pause (that cut steering out mid-maneuver). But a firm, deliberate grab still hands
-# control over -- so require a real takeover push while a lane change is active.
-LANE_CHANGE_TAKEOVER_TORQUE = 250  # 2.5 Nm sustained -> deliberate takeover during a lane change
+# During a lane change the driver holds/nudges to guide the car over, so touch and same-direction
+# torque must NOT pause (that cut steering out mid-maneuver). Distinguish intent by DIRECTION
+# (steeringTorque > 0 = left, per desire_helper): steering back toward the original lane is
+# "changing your mind" and aborts even gently; steering with the change guides; a firm grab either
+# way is a full takeover. Pausing lateral drops lane_change_state to off, cleanly aborting.
+LANE_CHANGE_ABORT_TORQUE = 80      # 0.8 Nm opposing the change -> gentle "change my mind" -> abort
+LANE_CHANGE_TAKEOVER_TORQUE = 250  # 2.5 Nm either direction -> firm deliberate takeover
+LANE_CHANGE_PAUSE_FRAMES = 15      # ~0.15s sustain to confirm a lane-change abort/takeover
 
 
 class ModularAssistiveDrivingSystem:
@@ -226,20 +231,30 @@ class ModularAssistiveDrivingSystem:
     # TIGUAN: sustained touch OR sustained torque (palm steering) pauses lateral;
     # counters also feed should_silent_lkas_enable
     if self.pause_on_hands_on:
-      # During a lane change the driver holds/nudges the wheel to guide it, so touch and gentle
-      # torque must not pause (that cut steering out mid-maneuver). A firm deliberate grab still
-      # takes over: while a lane change is active only >2.5 Nm sustained pauses, touch is ignored.
       lane_change_active = False
+      lc_dir = LaneChangeDirection.none
       if self.selfdrive.sm.seen['modelV2']:
-        lane_change_active = self.selfdrive.sm['modelV2'].meta.laneChangeState != LaneChangeState.off
-      pause_torque = LANE_CHANGE_TAKEOVER_TORQUE if lane_change_active else PALM_TORQUE
-      touch = CS.steeringSlightlyPressed and not lane_change_active
-      palm = abs(CS.steeringTorque) > pause_torque
-      holding = abs(CS.steeringTorque) > PALM_TORQUE_HOLD  # light contact counts toward *staying* paused
+        meta = self.selfdrive.sm['modelV2'].meta
+        lane_change_active = meta.laneChangeState != LaneChangeState.off
+        lc_dir = meta.laneChangeDirection
+      tq = CS.steeringTorque
+      if lane_change_active:
+        # steering back toward the original lane (opposing the change) = change of mind -> abort;
+        # a firm grab either direction = takeover. Same-direction/light input just guides.
+        opposing = ((lc_dir == LaneChangeDirection.left and tq < -LANE_CHANGE_ABORT_TORQUE) or
+                    (lc_dir == LaneChangeDirection.right and tq > LANE_CHANGE_ABORT_TORQUE))
+        touch = False  # capacitive touch is direction-ambiguous during a lane change; ignore it
+        palm = opposing or abs(tq) > LANE_CHANGE_TAKEOVER_TORQUE
+        pause_frames_needed = LANE_CHANGE_PAUSE_FRAMES
+      else:
+        touch = CS.steeringSlightlyPressed
+        palm = abs(tq) > PALM_TORQUE
+        pause_frames_needed = PALM_TORQUE_PAUSE_FRAMES
+      holding = abs(tq) > PALM_TORQUE_HOLD  # light contact counts toward *staying* paused
       self.hands_on_frames = self.hands_on_frames + 1 if touch else 0
       self.palm_frames = self.palm_frames + 1 if palm else 0
       self.hands_off_frames = 0 if (touch or holding) else self.hands_off_frames + 1
-      if self.enabled and (self.hands_on_frames >= HANDS_ON_PAUSE_FRAMES or self.palm_frames >= PALM_TORQUE_PAUSE_FRAMES):
+      if self.enabled and (self.hands_on_frames >= HANDS_ON_PAUSE_FRAMES or self.palm_frames >= pause_frames_needed):
         self.transition_paused_state()
 
     if self.should_silent_lkas_enable(CS):
