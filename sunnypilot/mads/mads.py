@@ -6,6 +6,7 @@ See the LICENSE.md file in the root directory for more details.
 """
 
 from cereal import log, custom
+LaneChangeState = log.LaneChangeState
 
 from opendbc.car import structs
 from opendbc.car.hyundai.values import HyundaiFlags
@@ -221,13 +222,18 @@ class ModularAssistiveDrivingSystem:
     # TIGUAN: sustained touch OR sustained torque (palm steering) pauses lateral;
     # counters also feed should_silent_lkas_enable
     if self.pause_on_hands_on:
-      touch = CS.steeringSlightlyPressed
-      palm = abs(CS.steeringTorque) > PALM_TORQUE
+      # Never pause during a lane change: the driver holds/nudges the wheel to guide the car over,
+      # and pausing lateral mid-maneuver is jerky and unsafe. Let the assist finish the lane change.
+      lane_change_active = False
+      if self.selfdrive.sm.seen['modelV2']:
+        lane_change_active = self.selfdrive.sm['modelV2'].meta.laneChangeState != LaneChangeState.off
+      touch = CS.steeringSlightlyPressed and not lane_change_active
+      palm = abs(CS.steeringTorque) > PALM_TORQUE and not lane_change_active
       holding = abs(CS.steeringTorque) > PALM_TORQUE_HOLD  # light contact counts toward *staying* paused
       self.hands_on_frames = self.hands_on_frames + 1 if touch else 0
       self.palm_frames = self.palm_frames + 1 if palm else 0
       self.hands_off_frames = 0 if (touch or holding) else self.hands_off_frames + 1
-      if self.enabled and (self.hands_on_frames >= HANDS_ON_PAUSE_FRAMES or self.palm_frames >= PALM_TORQUE_PAUSE_FRAMES):
+      if self.enabled and not lane_change_active and (self.hands_on_frames >= HANDS_ON_PAUSE_FRAMES or self.palm_frames >= PALM_TORQUE_PAUSE_FRAMES):
         self.transition_paused_state()
 
     if self.should_silent_lkas_enable(CS):

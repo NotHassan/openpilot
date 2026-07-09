@@ -132,8 +132,9 @@ class Controls(ControlsExt):
       self.lane_conf_ok = self.lane_conf_filtered > 0.55
     else:
       self.lane_conf_ok = self.lane_conf_filtered > 0.70
+    lane_change_active = self.sm['modelV2'].meta.laneChangeState != LaneChangeState.off if self.sm.seen['modelV2'] else False
     if self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
-      self.LaC.set_pid_enabled(self.enable_curvature_controller and (self.lane_conf_ok or not self.curvature_pid_lane_gate))
+      self.LaC.set_pid_enabled(self.enable_curvature_controller and (self.lane_conf_ok or not self.curvature_pid_lane_gate or lane_change_active))
 
   def state_control(self):
     CS = self.sm['carState']
