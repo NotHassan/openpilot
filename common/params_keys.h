@@ -209,6 +209,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"SpeedLimitNonPcmAutoMode", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"SpeedLimitHybridOffset", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"CurvaturePidLaneGate", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"IcbmSpeedLimitOnly", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"MadsMainCruiseAllowed", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"MadsSteeringMode", {PERSISTENT | BACKUP, INT, "0"}},
     {"MadsUnifiedEngagementMode", {PERSISTENT | BACKUP, BOOL, "1"}},

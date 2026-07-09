@@ -8,6 +8,7 @@ from cereal import car, custom
 from opendbc.car import structs, apply_hysteresis
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_CTRL
+from openpilot.common.params import Params
 from openpilot.sunnypilot.selfdrive.car.intelligent_cruise_button_management.helpers import get_minimum_set_speed
 from openpilot.sunnypilot.selfdrive.car.cruise_ext import CRUISE_BUTTON_TIMER, update_manual_button_timers
 
@@ -16,6 +17,7 @@ State = custom.IntelligentCruiseButtonManagement.IntelligentCruiseButtonManageme
 SendButtonState = custom.IntelligentCruiseButtonManagement.SendButtonState
 
 ALLOWED_SPEED_THRESHOLD = 1.8  # m/s, ~4 MPH
+SPEED_LIMIT_ONLY_MAX_MS = 90.0  # above this (V_CRUISE_UNSET=255) means the speed-limit assist has no target
 HYST_GAP = 0.0  # currently disabled; TODO-SP: might need to be brand-specific
 INACTIVE_TIMER = 0.4
 
@@ -42,6 +44,12 @@ class IntelligentCruiseButtonManagement:
     self.is_ready_prev = False
     self.v_target_ms_last = 0.0
     self.is_metric = False
+    # IcbmSpeedLimitOnly: follow ONLY the speed-limit assist's target (setpoint = limit + offset,
+    # held on zone; the stock ACC handles lead-following) instead of the full longitudinal plan
+    # vTarget (which chases leads and hunts the setpoint). Default off = stock plan-following.
+    self.params = Params()
+    self.param_frame = 0
+    self.speed_limit_only = self._read_speed_limit_only()
 
     self.cruise_button_timers = CRUISE_BUTTON_TIMER
 
@@ -53,11 +61,20 @@ class IntelligentCruiseButtonManagement:
     speed_conv = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
     ms_conv = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
 
-    self.v_target_ms_last = apply_hysteresis(LP_SP.vTarget, self.v_target_ms_last, HYST_GAP * ms_conv)
+    self.v_cruise_cluster = round(CS.cruiseState.speedCluster * speed_conv)
+    if self.speed_limit_only:
+      # assist.vTarget is limit+offset while a speed limit is active, else V_CRUISE_UNSET (255).
+      # When there's no active speed-limit target, hold at the current setpoint so the ICBM stays
+      # idle (no button presses) and the stock ACC owns speed -- including all lead following.
+      sla_v = LP_SP.speedLimit.assist.vTarget
+      source_v = sla_v if sla_v < SPEED_LIMIT_ONLY_MAX_MS else CS.cruiseState.speedCluster
+    else:
+      source_v = LP_SP.vTarget
+
+    self.v_target_ms_last = apply_hysteresis(source_v, self.v_target_ms_last, HYST_GAP * ms_conv)
 
     self.v_target = round(self.v_target_ms_last * speed_conv)
     self.v_cruise_min = get_minimum_set_speed(self.is_metric)
-    self.v_cruise_cluster = round(CS.cruiseState.speedCluster * speed_conv)
 
   def update_state_machine(self) -> custom.IntelligentCruiseButtonManagement.SendButtonState:
     self.pre_active_timer = max(0, self.pre_active_timer - 1)
@@ -113,11 +130,23 @@ class IntelligentCruiseButtonManagement:
 
     self.is_ready = ready and not button_pressed
 
+  def _read_speed_limit_only(self) -> bool:
+    # defensive: the param may be absent from an out-of-sync params registry on a source install
+    # that hasn't rebuilt the params library yet; fall back to stock plan-following.
+    try:
+      return self.params.get_bool("IcbmSpeedLimitOnly")
+    except Exception:
+      return False
+
   def run(self, CS: car.CarState, CC: car.CarControl, LP_SP: custom.LongitudinalPlanSP, is_metric: bool) -> None:
     if self.CP_SP.pcmCruiseSpeed:
       return
 
     self.is_metric = is_metric
+
+    self.param_frame += 1
+    if self.param_frame % 100 == 0:
+      self.speed_limit_only = self._read_speed_limit_only()
 
     self.update_calculations(CS, LP_SP)
     self.update_readiness(CS, CC)

@@ -37,6 +37,11 @@ DESCRIPTIONS = {
     "Disable curvature PID error amplification while lane line confidence is low (e.g. crossing " +
     "intersections), falling back to pure feedforward so path guesses stay gentle."
   ),
+  "IcbmSpeedLimitOnly": tr_noop(
+    "Set cruise to the speed limit + offset and hold it there, letting the stock ACC handle " +
+    "lead-car following. Prevents the setpoint from chasing traffic and hunting. Requires speed " +
+    "limit assist and cruise button management."
+  ),
   "EnableLongComfortMode": tr_noop(
     "Enables longitudinal jerk and accel deviation limit control for safe and comfortable driving"
   ),
@@ -180,6 +185,12 @@ class ICTogglesLayout(Widget):
         lambda: tr("Curvature PID: Lane Confidence Gate"),
         DESCRIPTIONS["CurvaturePidLaneGate"],
         "chffr_wheel.png",
+        False,
+      ),
+      "IcbmSpeedLimitOnly": (
+        lambda: tr("Cruise Buttons: Speed Limit Only"),
+        DESCRIPTIONS["IcbmSpeedLimitOnly"],
+        "speed_limit.png",
         False,
       ),
       "ShowDynamicSteeringLearnerGraph": (

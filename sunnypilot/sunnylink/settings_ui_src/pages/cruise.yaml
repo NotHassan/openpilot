@@ -226,6 +226,13 @@ sections:
         setpoint change is respected for the current zone and the structure resumes at the next zone change.
       enablement:
       - $ref: '#/macros/offroad'
+    - key: IcbmSpeedLimitOnly
+      widget: toggle
+      title: 'Cruise Buttons: Speed Limit Only'
+      description: Set cruise to the speed limit + offset and hold it, letting the stock ACC handle lead-car following.
+        Prevents the setpoint from chasing traffic and hunting. Requires speed limit assist and cruise button management.
+      enablement:
+      - $ref: '#/macros/offroad'
 - id: smart_cruise
   title: Smart Cruise Control
   description: ''

@@ -965,6 +965,17 @@
                       "type": "offroad_only"
                     }
                   ]
+                },
+                {
+                  "key": "IcbmSpeedLimitOnly",
+                  "widget": "toggle",
+                  "title": "Cruise Buttons: Speed Limit Only",
+                  "description": "Set cruise to the speed limit + offset and hold it, letting the stock ACC handle lead-car following. Prevents the setpoint from chasing traffic and hunting. Requires speed limit assist and cruise button management.",
+                  "enablement": [
+                    {
+                      "type": "offroad_only"
+                    }
+                  ]
                 }
               ]
             }
