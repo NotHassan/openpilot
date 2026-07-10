@@ -42,10 +42,6 @@ DESCRIPTIONS = {
     "lead-car following. Prevents the setpoint from chasing traffic and hunting. Requires speed " +
     "limit assist and cruise button management."
   ),
-  "IcbmBrakeAssist": tr_noop(
-    "When a lead is slowing meaningfully, lower the cruise setpoint early so the stock ACC starts " +
-    "braking sooner and gentler instead of late and hard. Requires Cruise Buttons: Speed Limit Only."
-  ),
   "EnableLongComfortMode": tr_noop(
     "Enables longitudinal jerk and accel deviation limit control for safe and comfortable driving"
   ),
@@ -194,12 +190,6 @@ class ICTogglesLayout(Widget):
       "IcbmSpeedLimitOnly": (
         lambda: tr("Cruise Buttons: Speed Limit Only"),
         DESCRIPTIONS["IcbmSpeedLimitOnly"],
-        "speed_limit.png",
-        False,
-      ),
-      "IcbmBrakeAssist": (
-        lambda: tr("Cruise Buttons: Early Brake Assist"),
-        DESCRIPTIONS["IcbmBrakeAssist"],
         "speed_limit.png",
         False,
       ),
