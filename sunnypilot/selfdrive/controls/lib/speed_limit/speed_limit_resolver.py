@@ -69,6 +69,7 @@ class SpeedLimitResolver:
       self.params
     )
     self.offset_value = self.params.get("SpeedLimitValueOffset", return_default=True)
+    self.offset_value_imperial = self.params.get("SpeedLimitValueOffsetImperial", return_default=True)
 
     self.speed_limit = 0.
     self.speed_limit_last = 0.
@@ -99,19 +100,23 @@ class SpeedLimitResolver:
       self.hybrid_offset = self.params.get_bool("SpeedLimitHybridOffset")
       self.offset_type = self.params.get("SpeedLimitOffsetType", return_default=True)
       self.offset_value = self.params.get("SpeedLimitValueOffset", return_default=True)
+    self.offset_value_imperial = self.params.get("SpeedLimitValueOffsetImperial", return_default=True)
 
-  # Hybrid offset (param SpeedLimitHybridOffset) -- full fixed offset at road speeds, half offset
-  # in slow zones. offset_value=20: 30->40, 40->50, 50->60, 60->80, 70->90, 80->100, 100->120.
-  HYBRID_THRESHOLD = {True: 60, False: 40}  # km/h / mph: full offset at/above, half below
+  # Hybrid offset (param SpeedLimitHybridOffset) -- full fixed offset at road speeds, half offset in
+  # slow zones, matched to local flow-of-traffic norms with a SEPARATE offset value per unit:
+  #   metric   (km/h, offset 20, thresh 60):  50->60, 60->80, 70->90, 100->120, 110->130
+  #   imperial (mph,  offset 10, thresh 55):  30->35, 45->50, 55->65, 65->75, 70->80  (US norms)
+  HYBRID_THRESHOLD = {True: 60, False: 55}  # km/h / mph: full offset at/above, half below
 
   def _get_speed_limit_offset(self) -> float:
     if self.offset_type == OffsetType.off:
       return 0
     elif self.offset_type == OffsetType.fixed:
       speed_conv = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
+      off_val = self.offset_value if self.is_metric else self.offset_value_imperial
       if self.hybrid_offset and 0 < self.speed_limit < self.HYBRID_THRESHOLD[self.is_metric] * speed_conv:
-        return float(self.offset_value * 0.5 * speed_conv)
-      return float(self.offset_value * speed_conv)
+        return float(off_val * 0.5 * speed_conv)
+      return float(off_val * speed_conv)
     elif self.offset_type == OffsetType.percentage:
       return float(self.offset_value * 0.01 * self.speed_limit)
     else:

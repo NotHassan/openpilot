@@ -198,12 +198,30 @@ sections:
         label: Percentage
     - key: SpeedLimitValueOffset
       widget: option
-      title: Speed Limit Offset Value
+      title: Speed Limit Offset Value (km/h)
+      description: Offset applied when the device is in metric. With Hybrid on, this is the full offset used at/above
+        60 km/h and half below.
       min: -30
       max: 30
       step: 1
       unit:
         metric: km/h
+        imperial: km/h
+      visibility:
+      - type: param_compare
+        key: SpeedLimitOffsetType
+        op: '>'
+        value: 0
+    - key: SpeedLimitValueOffsetImperial
+      widget: option
+      title: Speed Limit Offset Value (mph)
+      description: Offset applied when the device is in imperial (US). With Hybrid on, this is the full offset used
+        at/above 55 mph and half below (e.g. 10 gives 65->75, 70->80, town 30->35).
+      min: -20
+      max: 20
+      step: 1
+      unit:
+        metric: mph
         imperial: mph
       visibility:
       - type: param_compare

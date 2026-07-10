@@ -86,13 +86,24 @@ class SpeedLimitSettingsLayout(Widget):
       label_callback=self._get_offset_label,
     )
 
+    # separate imperial (mph) offset value; only one of the two is shown, per device unit
+    self._speed_limit_value_offset_imperial = option_item_sp(
+      title="",
+      param="SpeedLimitValueOffsetImperial",
+      min_value=-20,
+      max_value=20,
+      description=self._get_offset_description,
+      label_callback=self._get_offset_label,
+    )
+
     items = [
       self._speed_limit_mode,
       LineSeparatorSP(40),
       self._source_button,
       LineSeparatorSP(40),
       self._speed_limit_offset_type,
-      self._speed_limit_value_offset
+      self._speed_limit_value_offset,
+      self._speed_limit_value_offset_imperial
     ]
     return items
 
@@ -155,7 +166,10 @@ class SpeedLimitSettingsLayout(Widget):
       self._speed_limit_mode.action_item.set_enabled_buttons(None)
 
     offset_type = ui_state.params.get("SpeedLimitOffsetType", return_default=True)
-    self._speed_limit_value_offset.set_visible(offset_type != int(SpeedLimitOffsetType.off))
+    offset_on = offset_type != int(SpeedLimitOffsetType.off)
+    # show only the value control matching the current unit (metric km/h vs imperial mph)
+    self._speed_limit_value_offset.set_visible(offset_on and ui_state.is_metric)
+    self._speed_limit_value_offset_imperial.set_visible(offset_on and not ui_state.is_metric)
 
   def _render(self, rect):
     if self._current_panel == PanelType.POLICY:
