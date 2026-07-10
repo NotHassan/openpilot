@@ -212,6 +212,13 @@ sections:
         key: SpeedLimitOffsetType
         op: '>'
         value: 0
+    - key: AutoDetectUnit
+      widget: toggle
+      title: Match Car's Units (km/h / mph)
+      description: Automatically set the comma's units from the car's instrument cluster. Change the car display to
+        imperial and the comma follows.
+      enablement:
+      - $ref: '#/macros/offroad'
     - key: SpeedLimitValueOffsetImperial
       widget: option
       title: Speed Limit Offset Value (mph)

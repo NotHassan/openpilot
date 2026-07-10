@@ -37,6 +37,10 @@ DESCRIPTIONS = {
     "Disable curvature PID error amplification while lane line confidence is low (e.g. crossing " +
     "intersections), falling back to pure feedforward so path guesses stay gentle."
   ),
+  "AutoDetectUnit": tr_noop(
+    "Automatically match the comma's units (km/h / mph) to the car's instrument cluster setting. " +
+    "Change the car display to imperial and the comma follows."
+  ),
   "IcbmSpeedLimitOnly": tr_noop(
     "Set cruise to the speed limit + offset and hold it there, letting the stock ACC handle " +
     "lead-car following. Prevents the setpoint from chasing traffic and hunting. Requires speed " +
@@ -185,6 +189,12 @@ class ICTogglesLayout(Widget):
         lambda: tr("Curvature PID: Lane Confidence Gate"),
         DESCRIPTIONS["CurvaturePidLaneGate"],
         "chffr_wheel.png",
+        False,
+      ),
+      "AutoDetectUnit": (
+        lambda: tr("Match Car's Units (km/h / mph)"),
+        DESCRIPTIONS["AutoDetectUnit"],
+        "speed_limit.png",
         False,
       ),
       "IcbmSpeedLimitOnly": (
