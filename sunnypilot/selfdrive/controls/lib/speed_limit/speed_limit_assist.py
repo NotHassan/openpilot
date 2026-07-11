@@ -50,9 +50,12 @@ LIMIT_SPEED_OFFSET_TH = -1.  # m/s Maximum offset between speed limit and curren
 V_CRUISE_UNSET = 255.
 
 # Curve assist (auto mode + SCC-Vision -> ICBM): trim the setpoint just enough to take the bend
-# ahead within steering authority, then restore. Reduction is capped so a model misread can never
-# command a dramatic slowdown, and it only operates at road speed.
-CURVE_MAX_REDUCTION = {True: 25, False: 15}  # kph / mph below baseline
+# ahead within steering authority, then restore. The bend is re-evaluated every frame, so the
+# working bound is a ROLLING floor relative to current speed: a real deep bend staircases down as
+# the car slows (floor follows v_ego), while a phantom reading can only ever pull a small step
+# before the next frames correct it. The absolute reduction cap is just a catastrophe backstop.
+CURVE_MAX_BELOW_EGO = {True: 12, False: 8}   # kph / mph below CURRENT speed (rolling floor)
+CURVE_MAX_REDUCTION = {True: 35, False: 22}  # kph / mph below baseline (absolute backstop)
 CURVE_MIN_V_EGO = 15.  # m/s (~54 km/h): curve trim only at road speed
 
 CRUISE_BUTTONS_PLUS = (ButtonType.accelCruise, ButtonType.resumeCruise)
@@ -112,6 +115,7 @@ class SpeedLimitAssist:
     self.curve_restoring = False
     self.curve_target_conv = -1
     self.curve_baseline_conv = -1  # what to walk back to after the bend
+    self.curve_user_cancelled = False  # user spoke mid-bend: latched until this bend episode ends
 
     self._plus_hold = 0.
     self._minus_hold = 0.
@@ -428,11 +432,14 @@ class SpeedLimitAssist:
         self.curve_engaged = False
         self.curve_restoring = False
         self.curve_baseline_conv = -1
+        self.curve_user_cancelled = True  # theirs until this bend is over
         return
 
     curve_conv = round(self._curve_v_target * speed_conv) if self._curve_active and self._curve_v_target < V_CRUISE_UNSET else -1
 
     if curve_conv > 0 and self.v_ego >= CURVE_MIN_V_EGO:
+      if self.curve_user_cancelled:
+        return  # user owns this bend; re-arm only after the curve episode ends
       if not self.curve_engaged:
         # baseline to restore: the zone target when the assist is in charge, else the user's setpoint.
         # A chained bend engaging mid-restore keeps the ORIGINAL baseline -- re-snapshotting the
@@ -448,10 +455,13 @@ class SpeedLimitAssist:
       elif zone_in_charge:
         self.curve_baseline_conv = self.target_set_speed_conv  # track zone changes mid-bend
       if self.curve_engaged:
-        capped = max(curve_conv, self.curve_baseline_conv - CURVE_MAX_REDUCTION[self.is_metric])
+        rolling_floor = round(self.v_ego * speed_conv) - CURVE_MAX_BELOW_EGO[self.is_metric]
+        abs_floor = self.curve_baseline_conv - CURVE_MAX_REDUCTION[self.is_metric]
+        capped = max(curve_conv, rolling_floor, abs_floor)
         self.curve_target_conv = min(capped, self.curve_baseline_conv)
         self.target_set_speed_conv = self.curve_target_conv
     else:
+      self.curve_user_cancelled = False  # bend episode over: re-arm for the next one
       if self.curve_engaged:  # bend done: walk back up
         self.curve_engaged = False
         self.curve_restoring = True
