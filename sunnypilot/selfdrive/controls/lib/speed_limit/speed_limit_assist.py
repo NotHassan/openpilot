@@ -448,6 +448,9 @@ class SpeedLimitAssist:
     # than 30 s drops the memory -- restoring a stale baseline minutes later could be wrong.
     # (Skip the first frame back too -- the prev-setpoint tracker spans the disengagement.)
     if not (self.long_enabled and self.acc_enabled and self.acc_enabled_prev):
+      if self.curve_engaged and not self._curve_active:
+        self.curve_engaged = False   # bend ended during the takeover: what's left to do is restore
+        self.curve_restoring = True
       if self.curve_engaged or self.curve_restoring:
         self.curve_frozen_frames += 1
         if self.curve_frozen_frames > int(30. / DT_MDL):

@@ -128,7 +128,11 @@ class IntelligentCruiseButtonManagement:
   def update_readiness(self, CS: car.CarState, CC: car.CarControl) -> None:
     update_manual_button_timers(CS, self.cruise_button_timers)
 
-    ready = CC.enabled and not CC.cruiseControl.override and not CC.cruiseControl.cancel and not CC.cruiseControl.resume
+    # Standby (speed-limit-only flow): the VW setpoint memory stays visible and adjustable while
+    # cruise is disengaged, so a pending curve-assist restore can walk it back BEFORE the driver
+    # re-engages -- RES then resumes directly at the original speed.
+    standby = self.speed_limit_only and CS.cruiseState.available and not CS.cruiseState.enabled
+    ready = (CC.enabled or standby) and not CC.cruiseControl.override and not CC.cruiseControl.cancel and not CC.cruiseControl.resume
     button_pressed = any(self.cruise_button_timers[k] > 0 for k in self.cruise_button_timers)
 
     self.is_ready = ready and not button_pressed
