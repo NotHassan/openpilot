@@ -517,6 +517,11 @@ class SpeedLimitAssist:
     return enabled, active
 
   def update_events(self, events_sp: EventsSP) -> None:
+    # Auto mode is zero-interaction by design: zone changes adjust silently (the limit is already
+    # on screen). The chimed "Auto adjusting to speed limit" alerts are for the confirm-style modes.
+    if self.non_pcm_auto_mode:
+      return
+
     if self.state == SpeedLimitAssistState.preActive:
       events_sp.add(EventNameSP.speedLimitPreActive)
 
