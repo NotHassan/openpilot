@@ -124,6 +124,10 @@ class SpeedLimitAssist:
     self.acc_enabled = False       # stock ACC engaged (cruiseState.enabled)
     self.acc_enabled_prev = False
     self.curve_frozen_frames = 0   # frames spent frozen through a takeover/disengage
+    # Zone-change offset carry (auto mode): on a DESCENDING zone change, keep the driver's current
+    # relative offset (100 in an 80 -> 80 in a 60); ascending changes use the configured offset.
+    self.carried_target_conv = -1
+    self._target_change_frames = 99  # frames since the working target last changed
 
     self._plus_hold = 0.
     self._minus_hold = 0.
@@ -175,6 +179,8 @@ class SpeedLimitAssist:
       if self.pcm_op_long and self.is_enabled:
         return self._speed_limit_final_last
       if not self.pcm_op_long and self.is_active:
+        if self.non_pcm_auto_mode and self.carried_target_conv > 0:
+          return self.carried_target_conv * speed_conv
         return self._speed_limit_final_last
 
     # Fallback
@@ -241,6 +247,9 @@ class SpeedLimitAssist:
     pcm_long_required_max_set_speed_conv = round(pcm_long_required_max * speed_conv)
 
     self.target_set_speed_conv = pcm_long_required_max_set_speed_conv if self.pcm_op_long else self.speed_limit_final_last_conv
+    if not self.pcm_op_long and self.non_pcm_auto_mode and self.carried_target_conv > 0:
+      self.target_set_speed_conv = self.carried_target_conv
+    self._target_change_frames = 0 if self.target_set_speed_conv != self.prev_target_set_speed_conv else self._target_change_frames + 1
 
   @property
   def apply_confirm_speed_threshold(self) -> bool:
@@ -508,9 +517,21 @@ class SpeedLimitAssist:
     # is the user.
     if abs(self.v_cruise_cluster_conv - self.prev_v_cruise_cluster_conv) > 10:
       return False
-    # a change moving toward the current target is our own ICBM walking, not the user
-    return abs(self.v_cruise_cluster_conv - self.target_set_speed_conv) < \
-           abs(self.prev_v_cruise_cluster_conv - self.prev_target_set_speed_conv)
+    # both distances reference the CURRENT target: comparing against the previous frame's target
+    # misclassifies the first press after a zone-change handoff. A short grace window after a
+    # target change also forgives an in-flight press toward the old target.
+    toward = abs(self.v_cruise_cluster_conv - self.target_set_speed_conv) < \
+             abs(self.prev_v_cruise_cluster_conv - self.target_set_speed_conv)
+    return toward or self._target_change_frames < 15
+
+  def _zone_change_carry(self, old_limit_conv: int, new_limit_conv: int, basis_conv: int) -> None:
+    # Descending zone change: keep the driver's current relative offset (their setpoint or the
+    # running target, whichever was in charge). Ascending: back to the configured offset.
+    if 0 < new_limit_conv < old_limit_conv and basis_conv > 0:
+      carried = new_limit_conv + (basis_conv - old_limit_conv)
+      self.carried_target_conv = max(new_limit_conv, min(carried, new_limit_conv + 45))
+    else:
+      self.carried_target_conv = -1
 
   def update_state_machine_non_pcm_auto(self):
     # Auto mode -- see SpeedLimitNonPcmAutoMode note above. States: active / inactive / disabled.
@@ -520,19 +541,31 @@ class SpeedLimitAssist:
     if self.state != SpeedLimitAssistState.disabled:
       if not self.long_enabled or not self.enabled:
         self.state = SpeedLimitAssistState.disabled
+        self.carried_target_conv = -1
 
       elif self.state == SpeedLimitAssistState.active:
         if self.v_cruise_cluster_changed and self.acc_enabled and self.acc_enabled_prev and not self._expected_walk_change():
           # the user spoke: their setpoint is law for this zone
           self.state = SpeedLimitAssistState.inactive
           self.override_limit_conv = limit_conv
-        # limit changes while active need no transition: the target updates and ICBM walks
+          self.carried_target_conv = -1
+        else:
+          # zone value change while active: carry the running offset downward, configured upward
+          speed_conv = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
+          prev_limit_conv = round(self.speed_limit_prev * speed_conv) if self.speed_limit_prev > 0 else -1
+          if limit_conv > 0 and prev_limit_conv > 0 and limit_conv != prev_limit_conv:
+            basis = self.carried_target_conv if self.carried_target_conv > 0 else self.prev_speed_limit_final_last_conv
+            self._zone_change_carry(prev_limit_conv, limit_conv, basis)
 
       else:  # inactive (and any other non-active holdover)
         if limit_conv > 0 and self.override_limit_conv <= 0:
           self.override_limit_conv = limit_conv  # engaged before a zone was known: baseline it
         elif limit_conv > 0 and limit_conv != self.override_limit_conv:
-          self.state = SpeedLimitAssistState.active  # real zone change: structure takes over
+          # real zone change: structure takes over. Descending, keep the driver's current offset
+          # (their overridden setpoint relative to the old zone); ascending, configured offset.
+          basis = self.curve_baseline_conv if (self.curve_engaged or self.curve_restoring) else self.v_cruise_cluster_conv
+          self._zone_change_carry(self.override_limit_conv, limit_conv, basis)
+          self.state = SpeedLimitAssistState.active
 
     elif self.long_enabled and self.enabled:
       if not self.long_enabled_prev:

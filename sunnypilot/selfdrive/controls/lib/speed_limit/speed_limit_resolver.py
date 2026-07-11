@@ -114,7 +114,9 @@ class SpeedLimitResolver:
     elif self.offset_type == OffsetType.fixed:
       speed_conv = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
       off_val = self.offset_value if self.is_metric else self.offset_value_imperial
-      if self.hybrid_offset and 0 < self.speed_limit < self.HYBRID_THRESHOLD[self.is_metric] * speed_conv:
+      # compare in rounded display units: 60 km/h sits exactly on the threshold and float32
+      # conversions land either side of it (road bug: a 60 zone got the half offset -> 70 not 80)
+      if self.hybrid_offset and 0 < round(self.speed_limit / speed_conv) < self.HYBRID_THRESHOLD[self.is_metric]:
         return float(off_val * 0.5 * speed_conv)
       return float(off_val * speed_conv)
     elif self.offset_type == OffsetType.percentage:
