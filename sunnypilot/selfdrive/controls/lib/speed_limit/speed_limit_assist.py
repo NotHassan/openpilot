@@ -123,6 +123,7 @@ class SpeedLimitAssist:
     self.curve_user_cancelled = False  # user spoke mid-bend: latched until this bend episode ends
     self.acc_enabled = False       # stock ACC engaged (cruiseState.enabled)
     self.acc_enabled_prev = False
+    self.curve_frozen_frames = 0   # frames spent frozen through a takeover/disengage
 
     self._plus_hold = 0.
     self._minus_hold = 0.
@@ -419,21 +420,34 @@ class SpeedLimitAssist:
     # Trim the setpoint for the bend ahead (SCC-Vision), independent of zone-override state, then
     # restore. Overrides target_set_speed_conv so _expected_walk_change() classifies ICBM's walk
     # toward (and back from) the curve speed as expected -- never as a user override.
-    if not (self.curve_assist_enabled and self.non_pcm_auto_mode and self.long_enabled and self.enabled):
+    if not (self.curve_assist_enabled and self.non_pcm_auto_mode and self.enabled):
+      # feature/mode off: hard reset
       self.curve_engaged = False
       self.curve_restoring = False
       self.curve_baseline_conv = -1
+      self.curve_frozen_frames = 0
       return
 
     speed_conv = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
     zone_in_charge = self.state == SpeedLimitAssistState.active and self._has_speed_limit
 
-    # Driver takeover (brake) disengages stock ACC and the cluster setpoint reads 0/garbage; treat
-    # none of that as user input. Freeze the curve/restore state and continue when ACC resumes, so
-    # the original speed is still restored after the bend. (Skip the first frame back too -- the
-    # prev-setpoint tracker spans the disengagement.)
-    if not (self.acc_enabled and self.acc_enabled_prev):
+    # Driver takeover (brake) disengages stock ACC -- and on this car openpilot itself
+    # (carControl.enabled follows it) -- and the cluster setpoint reads 0/garbage; treat none of
+    # that as user input. Freeze the curve/restore state and continue on re-engage, so the
+    # original speed is still restored after the bend (road forensics: braking mid-bend wiped the
+    # restore memory and the setpoint stayed at the trimmed value). Bounded: a takeover longer
+    # than 30 s drops the memory -- restoring a stale baseline minutes later could be wrong.
+    # (Skip the first frame back too -- the prev-setpoint tracker spans the disengagement.)
+    if not (self.long_enabled and self.acc_enabled and self.acc_enabled_prev):
+      if self.curve_engaged or self.curve_restoring:
+        self.curve_frozen_frames += 1
+        if self.curve_frozen_frames > int(30. / DT_MDL):
+          self.curve_engaged = False
+          self.curve_restoring = False
+          self.curve_baseline_conv = -1
+          self.curve_frozen_frames = 0
       return
+    self.curve_frozen_frames = 0
 
     # the user speaking mid-curve (or mid-restore) wins for this bend: drop out entirely.
     # Expectation must reference OUR commanded target (curve or restore value) -- not the zone
