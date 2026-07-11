@@ -54,7 +54,11 @@ V_CRUISE_UNSET = 255.
 # working bound is a ROLLING floor relative to current speed: a real deep bend staircases down as
 # the car slows (floor follows v_ego), while a phantom reading can only ever pull a small step
 # before the next frames correct it. The absolute reduction cap is just a catastrophe backstop.
-CURVE_MAX_BELOW_EGO = {True: 12, False: 8}   # kph / mph below CURRENT speed (rolling floor)
+# Rolling floor width: measured on this car, stock ACC decel scales with the (speed - setpoint)
+# gap: 5 kph -> 0.18 m/s2, 9 -> 0.36, 26 -> 0.59. A 12-wide floor only bought ~0.4 m/s2 and the
+# car arrived at bends hot (road test 2026-07-11). 25 gets the ACC's ~0.6 m/s2 response; a phantom
+# reading still only costs ~3-4 kph of actual speed before the next frames correct it.
+CURVE_MAX_BELOW_EGO = {True: 25, False: 15}  # kph / mph below CURRENT speed (rolling floor)
 CURVE_MAX_REDUCTION = {True: 35, False: 22}  # kph / mph below baseline (absolute backstop)
 CURVE_MIN_V_EGO = 15.  # m/s (~54 km/h): curve trim only at road speed
 
