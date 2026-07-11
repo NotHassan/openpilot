@@ -128,6 +128,7 @@ class SpeedLimitAssist:
     # relative offset (100 in an 80 -> 80 in a 60); ascending changes use the configured offset.
     self.carried_target_conv = -1
     self._target_change_frames = 99  # frames since the working target last changed
+    self.curve_restore_to_conv = -1  # restore endpoint (baseline capped at the current zone target)
 
     self._plus_hold = 0.
     self._minus_hold = 0.
@@ -173,7 +174,8 @@ class SpeedLimitAssist:
       if self.curve_engaged and self.curve_target_conv > 0:
         return self.curve_target_conv * speed_conv
       if self.curve_restoring and self.curve_baseline_conv > 0:
-        return self.curve_baseline_conv * speed_conv
+        restore_to = self.curve_restore_to_conv if self.curve_restore_to_conv > 0 else self.curve_baseline_conv
+        return restore_to * speed_conv
 
     if self._has_speed_limit:
       if self.pcm_op_long and self.is_enabled:
@@ -506,12 +508,18 @@ class SpeedLimitAssist:
         self.curve_engaged = False
         self.curve_restoring = True
       if self.curve_restoring:
-        if zone_in_charge or self.curve_baseline_conv <= 0 or self.v_cruise_cluster_conv >= self.curve_baseline_conv:
-          # zone target takes over naturally, or we are back at the user's speed
+        # if a zone change during the bend lowered the working target below the baseline, restore
+        # only up to it -- walking up to the old baseline just to walk back down is wrong
+        zone_target = self.carried_target_conv if self.carried_target_conv > 0 else \
+                      (self.speed_limit_final_last_conv if self._has_speed_limit else -1)
+        restore_to = min(self.curve_baseline_conv, zone_target) if zone_target > 0 else self.curve_baseline_conv
+        self.curve_restore_to_conv = restore_to
+        if zone_in_charge or self.curve_baseline_conv <= 0 or self.v_cruise_cluster_conv >= restore_to:
+          # zone target takes over naturally, or we are back at the driver's speed
           self.curve_restoring = False
           self.curve_baseline_conv = -1
         else:
-          self.target_set_speed_conv = self.curve_baseline_conv
+          self.target_set_speed_conv = restore_to
 
   def _expected_walk_change(self) -> bool:
     # ICBM walks the setpoint in +/-1 presses and, when the target is far, +/-10 big-step presses
@@ -525,7 +533,11 @@ class SpeedLimitAssist:
     # target change also forgives an in-flight press toward the old target.
     toward = abs(self.v_cruise_cluster_conv - self.target_set_speed_conv) < \
              abs(self.prev_v_cruise_cluster_conv - self.target_set_speed_conv)
-    return toward or self._target_change_frames < 15
+    # the grace window only forgives an in-flight press toward the PREVIOUS target -- a press away
+    # from both targets is the user (road bug: a user +10 mid-restore was dragged back down)
+    toward_prev = abs(self.v_cruise_cluster_conv - self.prev_target_set_speed_conv) < \
+                  abs(self.prev_v_cruise_cluster_conv - self.prev_target_set_speed_conv)
+    return toward or (self._target_change_frames < 15 and toward_prev)
 
   def _zone_change_carry(self, old_limit_conv: int, new_limit_conv: int, basis_conv: int) -> None:
     # Descending zone change: keep the driver's current relative offset (their setpoint or the
