@@ -35,7 +35,7 @@ PALM_TORQUE = 100               # 1.0 Nm -- to TRIGGER a pause (assist active ->
 PALM_TORQUE_HOLD = 40           # 0.4 Nm -- to HOLD a pause (no assist while paused -> torque is pure driver,
                                 #           so even light palm guidance mid-turn keeps lateral paused)
 PALM_TORQUE_PAUSE_FRAMES = 50   # ~0.5s at 100Hz of sustained torque before pausing
-HANDS_OFF_RESUME_FRAMES = 50    # ~0.5s at 100Hz with neither before lateral resumes
+HANDS_OFF_RESUME_FRAMES = 30    # ~0.3s at 100Hz with neither before lateral resumes
 # During a lane change the driver holds/nudges to guide the car over, so touch and same-direction
 # torque must NOT pause (that cut steering out mid-maneuver). Distinguish intent by DIRECTION
 # (steeringTorque > 0 = left, per desire_helper): steering back toward the original lane is
