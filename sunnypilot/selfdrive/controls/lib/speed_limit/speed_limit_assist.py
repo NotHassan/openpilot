@@ -54,14 +54,12 @@ V_CRUISE_UNSET = 255.
 # working bound is a ROLLING floor relative to current speed: a real deep bend staircases down as
 # the car slows (floor follows v_ego), while a phantom reading can only ever pull a small step
 # before the next frames correct it. The absolute reduction cap is just a catastrophe backstop.
-# Rolling floor width: measured on this car, stock ACC decel scales with the (speed - setpoint)
-# gap: 5 kph -> 0.18 m/s2, 9 -> 0.36, 26 -> 0.59, and larger drops brake harder still. Make the
-# width track urgency: the further current speed is above the bend's required speed, the wider the
-# gap we open (up to CURVE_FLOOR_MAX), tapering back to CURVE_FLOOR_MIN as the car closes in --
-# brake as hard as needed, no harder. A phantom reading still only costs the decel of one or two
-# seconds of actual speed before the next frames correct it.
-CURVE_FLOOR_MIN = {True: 25, False: 15}      # kph / mph gap when nearly at the required speed
-CURVE_FLOOR_MAX = {True: 40, False: 25}      # kph / mph gap when far above it
+# No rolling floor: with big-step (+/-10) ICBM presses the design is to open the speed-setpoint
+# gap immediately (measured: ACC decel scales with the gap, ~1.0 m/s2 at 29). The command goes
+# straight to the bend's required speed; protection is the absolute backstop below plus the
+# live-target rule (recomputed every frame, never below what the bend needs, released the moment
+# the bend is makeable). A phantom reading costs only the decel of the ~1-2 s until frames
+# correct, then big-step restore recovers.
 CURVE_MAX_REDUCTION = {True: 45, False: 28}  # kph / mph below baseline (absolute backstop)
 CURVE_MIN_V_EGO = 15.  # m/s (~54 km/h): curve trim only at road speed
 
@@ -444,7 +442,8 @@ class SpeedLimitAssist:
       ref_conv = self.curve_target_conv if self.curve_engaged else self.curve_baseline_conv
       step_size = abs(self.v_cruise_cluster_conv - self.prev_v_cruise_cluster_conv)
       toward = abs(self.v_cruise_cluster_conv - ref_conv) <= abs(self.prev_v_cruise_cluster_conv - ref_conv)
-      if step_size >= 2 or not toward:
+      # ICBM itself now big-steps +/-10 toward the target; only larger jumps or away-steps are the user
+      if step_size > 10 or not toward:
         self.curve_engaged = False
         self.curve_restoring = False
         self.curve_baseline_conv = -1
@@ -471,13 +470,8 @@ class SpeedLimitAssist:
       elif zone_in_charge:
         self.curve_baseline_conv = self.target_set_speed_conv  # track zone changes mid-bend
       if self.curve_engaged:
-        v_ego_conv = round(self.v_ego * speed_conv)
-        shortfall = max(v_ego_conv - curve_conv, 0)
-        lo, hi = CURVE_FLOOR_MIN[self.is_metric], CURVE_FLOOR_MAX[self.is_metric]
-        width = min(lo + max(shortfall - lo // 2, 0), hi)  # lo at small shortfall, hi when far above
-        rolling_floor = v_ego_conv - width
         abs_floor = self.curve_baseline_conv - CURVE_MAX_REDUCTION[self.is_metric]
-        capped = max(curve_conv, rolling_floor, abs_floor)
+        capped = max(curve_conv, abs_floor)
         self.curve_target_conv = min(capped, self.curve_baseline_conv)
         self.target_set_speed_conv = self.curve_target_conv
     else:
@@ -494,11 +488,13 @@ class SpeedLimitAssist:
           self.target_set_speed_conv = self.curve_baseline_conv
 
   def _expected_walk_change(self) -> bool:
-    # ICBM only ever walks the setpoint in +/-1 steps (set/resume presses, rate limited), so a
-    # jump of >=2 in one frame is provably the user (e.g. a +/-10 button), regardless of direction
-    if abs(self.v_cruise_cluster_conv - self.prev_v_cruise_cluster_conv) >= 2:
+    # ICBM walks the setpoint in +/-1 presses and, when the target is far, +/-10 big-step presses
+    # (which the cluster may round to a 10s multiple, so any step up to 10 toward the target is
+    # plausibly ours). A jump larger than one big press, or any step moving AWAY from the target,
+    # is the user.
+    if abs(self.v_cruise_cluster_conv - self.prev_v_cruise_cluster_conv) > 10:
       return False
-    # a +/-1 change moving toward the current target is our own ICBM walking, not the user
+    # a change moving toward the current target is our own ICBM walking, not the user
     return abs(self.v_cruise_cluster_conv - self.target_set_speed_conv) < \
            abs(self.prev_v_cruise_cluster_conv - self.prev_target_set_speed_conv)
 
