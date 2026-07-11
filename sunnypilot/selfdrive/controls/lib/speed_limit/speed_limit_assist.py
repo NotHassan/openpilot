@@ -55,11 +55,14 @@ V_CRUISE_UNSET = 255.
 # the car slows (floor follows v_ego), while a phantom reading can only ever pull a small step
 # before the next frames correct it. The absolute reduction cap is just a catastrophe backstop.
 # Rolling floor width: measured on this car, stock ACC decel scales with the (speed - setpoint)
-# gap: 5 kph -> 0.18 m/s2, 9 -> 0.36, 26 -> 0.59. A 12-wide floor only bought ~0.4 m/s2 and the
-# car arrived at bends hot (road test 2026-07-11). 25 gets the ACC's ~0.6 m/s2 response; a phantom
-# reading still only costs ~3-4 kph of actual speed before the next frames correct it.
-CURVE_MAX_BELOW_EGO = {True: 25, False: 15}  # kph / mph below CURRENT speed (rolling floor)
-CURVE_MAX_REDUCTION = {True: 35, False: 22}  # kph / mph below baseline (absolute backstop)
+# gap: 5 kph -> 0.18 m/s2, 9 -> 0.36, 26 -> 0.59, and larger drops brake harder still. Make the
+# width track urgency: the further current speed is above the bend's required speed, the wider the
+# gap we open (up to CURVE_FLOOR_MAX), tapering back to CURVE_FLOOR_MIN as the car closes in --
+# brake as hard as needed, no harder. A phantom reading still only costs the decel of one or two
+# seconds of actual speed before the next frames correct it.
+CURVE_FLOOR_MIN = {True: 25, False: 15}      # kph / mph gap when nearly at the required speed
+CURVE_FLOOR_MAX = {True: 40, False: 25}      # kph / mph gap when far above it
+CURVE_MAX_REDUCTION = {True: 45, False: 28}  # kph / mph below baseline (absolute backstop)
 CURVE_MIN_V_EGO = 15.  # m/s (~54 km/h): curve trim only at road speed
 
 CRUISE_BUTTONS_PLUS = (ButtonType.accelCruise, ButtonType.resumeCruise)
@@ -120,6 +123,8 @@ class SpeedLimitAssist:
     self.curve_target_conv = -1
     self.curve_baseline_conv = -1  # what to walk back to after the bend
     self.curve_user_cancelled = False  # user spoke mid-bend: latched until this bend episode ends
+    self.acc_enabled = False       # stock ACC engaged (cruiseState.enabled)
+    self.acc_enabled_prev = False
 
     self._plus_hold = 0.
     self._minus_hold = 0.
@@ -425,6 +430,13 @@ class SpeedLimitAssist:
     speed_conv = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
     zone_in_charge = self.state == SpeedLimitAssistState.active and self._has_speed_limit
 
+    # Driver takeover (brake) disengages stock ACC and the cluster setpoint reads 0/garbage; treat
+    # none of that as user input. Freeze the curve/restore state and continue when ACC resumes, so
+    # the original speed is still restored after the bend. (Skip the first frame back too -- the
+    # prev-setpoint tracker spans the disengagement.)
+    if not (self.acc_enabled and self.acc_enabled_prev):
+      return
+
     # the user speaking mid-curve (or mid-restore) wins for this bend: drop out entirely.
     # Expectation must reference OUR commanded target (curve or restore value) -- not the zone
     # target update_calculations just reset -- or ICBM's own walk past the midpoint reads as user.
@@ -459,7 +471,11 @@ class SpeedLimitAssist:
       elif zone_in_charge:
         self.curve_baseline_conv = self.target_set_speed_conv  # track zone changes mid-bend
       if self.curve_engaged:
-        rolling_floor = round(self.v_ego * speed_conv) - CURVE_MAX_BELOW_EGO[self.is_metric]
+        v_ego_conv = round(self.v_ego * speed_conv)
+        shortfall = max(v_ego_conv - curve_conv, 0)
+        lo, hi = CURVE_FLOOR_MIN[self.is_metric], CURVE_FLOOR_MAX[self.is_metric]
+        width = min(lo + max(shortfall - lo // 2, 0), hi)  # lo at small shortfall, hi when far above
+        rolling_floor = v_ego_conv - width
         abs_floor = self.curve_baseline_conv - CURVE_MAX_REDUCTION[self.is_metric]
         capped = max(curve_conv, rolling_floor, abs_floor)
         self.curve_target_conv = min(capped, self.curve_baseline_conv)
@@ -496,7 +512,7 @@ class SpeedLimitAssist:
         self.state = SpeedLimitAssistState.disabled
 
       elif self.state == SpeedLimitAssistState.active:
-        if self.v_cruise_cluster_changed and not self._expected_walk_change():
+        if self.v_cruise_cluster_changed and self.acc_enabled and self.acc_enabled_prev and not self._expected_walk_change():
           # the user spoke: their setpoint is law for this zone
           self.state = SpeedLimitAssistState.inactive
           self.override_limit_conv = limit_conv
@@ -546,9 +562,11 @@ class SpeedLimitAssist:
 
   def update(self, long_enabled: bool, long_override: bool, v_ego: float, a_ego: float, v_cruise_cluster: float, speed_limit: float,
              speed_limit_final_last: float, has_speed_limit: bool, distance: float, events_sp: EventsSP,
-             curve_v_target: float = float(V_CRUISE_UNSET), curve_active: bool = False) -> None:
+             curve_v_target: float = float(V_CRUISE_UNSET), curve_active: bool = False,
+             acc_enabled: bool = True) -> None:
     self._curve_v_target = curve_v_target
     self._curve_active = curve_active
+    self.acc_enabled = acc_enabled
     self.long_enabled = long_enabled
     self.v_ego = v_ego
     self.a_ego = a_ego
@@ -579,6 +597,7 @@ class SpeedLimitAssist:
     self.prev_target_set_speed_conv = self.target_set_speed_conv
     self.prev_v_cruise_cluster_conv = self.v_cruise_cluster_conv
     self.prev_speed_limit_final_last_conv = self.speed_limit_final_last_conv
+    self.acc_enabled_prev = self.acc_enabled
 
     self.output_v_target = self.get_v_target_from_control()
     self.output_a_target = self.get_a_target_from_control()
