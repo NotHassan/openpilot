@@ -30,7 +30,7 @@ IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
 # (carState.steeringSlightlyPressed) OR sustained steering torque -- palm-on-wheel steering evades
 # capacitive zones entirely, so torque is the fallback. Torque needs a longer sustain than touch
 # because brief rack-recoil transients can exceed 1 Nm hands-off.
-HANDS_ON_PAUSE_FRAMES = 30      # ~0.3s at 100Hz of touch before pausing
+HANDS_ON_PAUSE_FRAMES = 1       # immediate: grabbing the wheel pauses steering right away (capacitive signal is clean)
 PALM_TORQUE = 100               # 1.0 Nm -- to TRIGGER a pause (assist active -> recoil transients exist)
 PALM_TORQUE_HOLD = 40           # 0.4 Nm -- to HOLD a pause (no assist while paused -> torque is pure driver,
                                 #           so even light palm guidance mid-turn keeps lateral paused)
