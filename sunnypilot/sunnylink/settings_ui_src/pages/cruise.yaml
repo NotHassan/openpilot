@@ -212,6 +212,14 @@ sections:
         key: SpeedLimitOffsetType
         op: '>'
         value: 0
+    - key: CurveSpeedAssist
+      widget: toggle
+      title: Curve Speed Assist
+      description: Lowers the cruise control set speed just enough to take the bend ahead within steering
+        limits, then restores it after the bend. Only acts when the turn cannot be made at the current set
+        speed; reduction capped at 25 km/h (15 mph). Requires ICBM.
+      enablement:
+      - $ref: '#/macros/offroad'
     - key: AutoDetectUnit
       widget: toggle
       title: Match Car's Units (km/h / mph)

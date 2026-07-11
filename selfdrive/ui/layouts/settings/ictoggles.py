@@ -37,6 +37,11 @@ DESCRIPTIONS = {
     "Disable curvature PID error amplification while lane line confidence is low (e.g. crossing " +
     "intersections), falling back to pure feedforward so path guesses stay gentle."
   ),
+  "CurveSpeedAssist": tr_noop(
+    "Reads the bend ahead from the driving model and, only when the turn cannot be made at the current "
+    "set speed, lowers the cruise control set speed just enough to take it within steering limits, then "
+    "restores it after the bend. Reduction capped at 25 km/h (15 mph). Requires ICBM."
+  ),
   "AutoDetectUnit": tr_noop(
     "Automatically match the comma's units (km/h / mph) to the car's instrument cluster setting. " +
     "Change the car display to imperial and the comma follows."
@@ -189,6 +194,12 @@ class ICTogglesLayout(Widget):
         lambda: tr("Curvature PID: Lane Confidence Gate"),
         DESCRIPTIONS["CurvaturePidLaneGate"],
         "chffr_wheel.png",
+        False,
+      ),
+      "CurveSpeedAssist": (
+        lambda: tr("Curve Speed Assist"),
+        DESCRIPTIONS["CurveSpeedAssist"],
+        "speed_limit.png",
         False,
       ),
       "AutoDetectUnit": (

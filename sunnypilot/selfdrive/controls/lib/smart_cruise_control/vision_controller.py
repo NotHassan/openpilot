@@ -52,14 +52,22 @@ class SmartCruiseControlVision:
   output_v_target: float = V_CRUISE_UNSET
   output_a_target: float = 0.
 
-  def __init__(self):
+  def __init__(self, CP=None):
     self.params = Params()
+    # Tiguan MK3: target the measured steering-authority envelope (2.4 m/s^2 guard, 2.6 fault onset)
+    # with margin, so bends are slowed just enough to stay inside rack authority.
+    try:
+      from opendbc.car.volkswagen.values import VolkswagenFlags
+      tiguan = CP is not None and bool(CP.flags & VolkswagenFlags.TIGUAN_MK3_TUNING)
+    except Exception:
+      tiguan = False
+    self.a_lat_reg_max = 2.2 if tiguan else _A_LAT_REG_MAX
     self.frame = -1
     self.long_enabled = False
     self.long_override = False
     self.is_enabled = False
     self.is_active = False
-    self.enabled = self.params.get_bool("SmartCruiseControlVision")
+    self.enabled = self._read_enabled()
     self.v_cruise_setpoint = 0.
 
     self.state = VisionState.disabled
@@ -75,9 +83,19 @@ class SmartCruiseControlVision:
 
     return V_CRUISE_UNSET
 
+  def _read_enabled(self) -> bool:
+    # Curve Speed Assist (setpoint trim via ICBM) needs the vision turn computation too,
+    # without changing what the stock SCC-V toggle means.
+    enabled = self.params.get_bool("SmartCruiseControlVision")
+    try:
+      enabled = enabled or self.params.get_bool("CurveSpeedAssist")
+    except Exception:
+      pass
+    return enabled
+
   def _update_params(self) -> None:
     if self.frame % int(PARAMS_UPDATE_PERIOD / DT_MDL) == 0:
-      self.enabled = self.params.get_bool("SmartCruiseControlVision")
+      self.enabled = self._read_enabled()
 
   def _update_calculations(self, sm: messaging.SubMaster) -> None:
     if not self.long_enabled:
@@ -97,7 +115,7 @@ class SmartCruiseControlVision:
       max_curve = self.max_pred_lat_acc / (v_ego**2)
 
       # Get the target velocity for the maximum curve
-      self.v_target = (_A_LAT_REG_MAX / max_curve) ** 0.5
+      self.v_target = (self.a_lat_reg_max / max_curve) ** 0.5
 
   def _update_state_machine(self) -> tuple[bool, bool]:
     # ENABLED, ENTERING, TURNING, LEAVING, OVERRIDING

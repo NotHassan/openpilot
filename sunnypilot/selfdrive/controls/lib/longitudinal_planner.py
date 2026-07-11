@@ -26,7 +26,7 @@ class LongitudinalPlannerSP:
     self.events_sp = EventsSP()
     self.resolver = SpeedLimitResolver()
     self.dec = DynamicExperimentalController(CP, mpc)
-    self.scc = SmartCruiseControl()
+    self.scc = SmartCruiseControl(CP)
     self.resolver = SpeedLimitResolver()
     self.sla = SpeedLimitAssist(CP, CP_SP)
     self.generation = int(model_bundle.generation) if (model_bundle := get_active_bundle()) else None
@@ -60,7 +60,8 @@ class LongitudinalPlannerSP:
     # Speed Limit Assist
     has_speed_limit = self.resolver.speed_limit_valid or self.resolver.speed_limit_last_valid
     self.sla.update(long_enabled, long_override, v_ego, a_ego, v_cruise_cluster, self.resolver.speed_limit,
-                    self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp)
+                    self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp,
+                    curve_v_target=self.scc.vision.output_v_target, curve_active=self.scc.vision.is_active)
 
     targets = {
       LongitudinalPlanSource.cruise: (v_cruise, a_ego),
