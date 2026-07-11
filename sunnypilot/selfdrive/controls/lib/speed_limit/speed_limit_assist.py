@@ -434,8 +434,13 @@ class SpeedLimitAssist:
 
     if curve_conv > 0 and self.v_ego >= CURVE_MIN_V_EGO:
       if not self.curve_engaged:
-        # baseline to restore: the zone target when the assist is in charge, else the user's setpoint
-        baseline = self.target_set_speed_conv if zone_in_charge else self.v_cruise_cluster_conv
+        # baseline to restore: the zone target when the assist is in charge, else the user's setpoint.
+        # A chained bend engaging mid-restore keeps the ORIGINAL baseline -- re-snapshotting the
+        # half-restored setpoint would silently forget the user's speed across S-curves.
+        if self.curve_restoring and self.curve_baseline_conv > 0:
+          baseline = self.curve_baseline_conv
+        else:
+          baseline = self.target_set_speed_conv if zone_in_charge else self.v_cruise_cluster_conv
         if curve_conv <= baseline - 2:
           self.curve_engaged = True
           self.curve_restoring = False
