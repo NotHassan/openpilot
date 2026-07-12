@@ -127,6 +127,7 @@ class SpeedLimitAssist:
     # Zone-change offset carry (auto mode): on a DESCENDING zone change, keep the driver's current
     # relative offset (100 in an 80 -> 80 in a 60); ascending changes use the configured offset.
     self.carried_target_conv = -1
+    self.carried_for_limit_conv = -1  # the zone limit the carry was computed FOR: any other limit ignores it
     self._target_change_frames = 99  # frames since the working target last changed
     self.curve_restore_to_conv = -1  # restore endpoint (baseline capped at the current zone target)
     self.user_btn_frames = 0         # frames since a genuine driver stalk press (press-truth)
@@ -182,7 +183,7 @@ class SpeedLimitAssist:
       if self.pcm_op_long and self.is_enabled:
         return self._speed_limit_final_last
       if not self.pcm_op_long and self.is_active:
-        if self.non_pcm_auto_mode and self.carried_target_conv > 0:
+        if self.non_pcm_auto_mode and self._carried_valid():
           return self.carried_target_conv * speed_conv
         return self._speed_limit_final_last
 
@@ -250,7 +251,7 @@ class SpeedLimitAssist:
     pcm_long_required_max_set_speed_conv = round(pcm_long_required_max * speed_conv)
 
     self.target_set_speed_conv = pcm_long_required_max_set_speed_conv if self.pcm_op_long else self.speed_limit_final_last_conv
-    if not self.pcm_op_long and self.non_pcm_auto_mode and self.carried_target_conv > 0:
+    if not self.pcm_op_long and self.non_pcm_auto_mode and self._carried_valid():
       self.target_set_speed_conv = self.carried_target_conv
     self._target_change_frames = 0 if self.target_set_speed_conv != self.prev_target_set_speed_conv else self._target_change_frames + 1
 
@@ -535,7 +536,7 @@ class SpeedLimitAssist:
       if self.curve_restoring:
         # if a zone change during the bend lowered the working target below the baseline, restore
         # only up to it -- walking up to the old baseline just to walk back down is wrong
-        zone_target = self.carried_target_conv if self.carried_target_conv > 0 else \
+        zone_target = self.carried_target_conv if self._carried_valid() else \
                       (self.speed_limit_final_last_conv if self._has_speed_limit else -1)
         restore_to = min(self.curve_baseline_conv, zone_target) if zone_target > 0 else self.curve_baseline_conv
         self.curve_restore_to_conv = restore_to
@@ -572,8 +573,17 @@ class SpeedLimitAssist:
     if 0 < new_limit_conv < old_limit_conv and basis_conv > 0:
       carried = new_limit_conv + (basis_conv - old_limit_conv)
       self.carried_target_conv = max(new_limit_conv, min(carried, new_limit_conv + 45))
+      self.carried_for_limit_conv = new_limit_conv
     else:
       self.carried_target_conv = -1
+      self.carried_for_limit_conv = -1
+
+  def _carried_valid(self) -> bool:
+    # a carried target is only meaningful in the exact zone it was computed for -- resolver
+    # dropouts between zones can skip the zone-change hooks, and a stale carry then silently
+    # becomes the working target (road bug: ascends never walked up; restores capped at odd
+    # values like 82/93)
+    return self.carried_target_conv > 0 and self._limit_conv() == self.carried_for_limit_conv
 
   def update_state_machine_non_pcm_auto(self):
     # Auto mode -- see SpeedLimitNonPcmAutoMode note above. States: active / inactive / disabled.
@@ -596,7 +606,7 @@ class SpeedLimitAssist:
           speed_conv = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
           prev_limit_conv = round(self.speed_limit_prev * speed_conv) if self.speed_limit_prev > 0 else -1
           if limit_conv > 0 and prev_limit_conv > 0 and limit_conv != prev_limit_conv:
-            basis = self.carried_target_conv if self.carried_target_conv > 0 else self.prev_speed_limit_final_last_conv
+            basis = self.carried_target_conv if self._carried_valid() else self.prev_speed_limit_final_last_conv
             self._zone_change_carry(prev_limit_conv, limit_conv, basis)
 
       else:  # inactive (and any other non-active holdover)

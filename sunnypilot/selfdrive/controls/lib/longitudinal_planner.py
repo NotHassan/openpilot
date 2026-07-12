@@ -25,7 +25,7 @@ LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
 # this long, the car is at the physical limit of the turn RIGHT NOW -- trim speed regardless of
 # what the path prediction says. Clip transients from rate limiting are shorter than the trigger.
 SAT_CLIP_CURV = 2.5e-4         # |desired| - |applied| curvature indicating a real clip (~0.5 deg wheel)
-SAT_UTILIZATION = 0.92         # engage on APPROACH: fraction of the 2.4 m/s2 authority envelope in use
+SAT_UTILIZATION = 0.96         # engage on APPROACH (~2.3 of 2.4 m/s2): routine firm bends run ~2.2 and must not trigger
 SAT_LAT_ACCEL_LIM = 2.4        # matches the opendbc steering guard
 SAT_MIN_V = 14.                # m/s; city corners (angle-guard territory) are not this system's job
 SAT_TRIGGER_FRAMES = 10        # 0.5 s at 20 Hz sustained before engaging
@@ -50,6 +50,9 @@ class LongitudinalPlannerSP:
     self.sat_frames = 0
     self.sat_clean_frames = 0
     self.sat_active = False
+    self.sat_anchor_v = 0.  # v_ego when saturation triggered: the trim target anchors HERE and never
+                            # chases v_ego down (a lead car slowing us mid-bend must not drag the
+                            # setpoint with it -- that is the removed brake-assist failure mode)
 
   def is_e2e(self, sm: messaging.SubMaster) -> bool:
     experimental_mode = sm['selfdriveState'].experimentalMode
@@ -89,9 +92,14 @@ class LongitudinalPlannerSP:
       if self.sat_clean_frames >= SAT_RELEASE_FRAMES:
         self.sat_frames = 0
         self.sat_active = False
-    if self.sat_frames >= SAT_TRIGGER_FRAMES:
+    if self.sat_frames >= SAT_TRIGGER_FRAMES and not self.sat_active:
       self.sat_active = True
-    sat_v_target = (v_ego - SAT_TRIM_MS) if self.sat_active else 255.  # 255 = V_CRUISE_UNSET sentinel
+      self.sat_anchor_v = v_ego
+    elif self.sat_active and self.sat_frames >= SAT_TRIGGER_FRAMES + 50:
+      # still clipping 2.5 s after the last step: deepen by one more step from current speed
+      self.sat_anchor_v = min(self.sat_anchor_v, v_ego)
+      self.sat_frames = SAT_TRIGGER_FRAMES
+    sat_v_target = (self.sat_anchor_v - SAT_TRIM_MS) if self.sat_active else 255.  # 255 = V_CRUISE_UNSET sentinel
 
     # Speed Limit Resolver
     self.resolver.update(v_ego, sm)
