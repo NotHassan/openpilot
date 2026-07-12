@@ -131,6 +131,11 @@ class SpeedLimitAssist:
     self._target_change_frames = 99  # frames since the working target last changed
     self.curve_restore_to_conv = -1  # restore endpoint (baseline capped at the current zone target)
     self.user_btn_frames = 0         # frames since a genuine driver stalk press (press-truth)
+    self.stable_limit_conv = -1      # zone debounce: the confirmed working zone limit
+    self.stable_final_ms = 0.        # and its target (limit + offset), in m/s
+    self._pending_limit_conv = -1
+    self._pending_frames = 0
+    self._stable_limit_prev = -1
 
     self._plus_hold = 0.
     self._minus_hold = 0.
@@ -185,6 +190,8 @@ class SpeedLimitAssist:
       if not self.pcm_op_long and self.is_active:
         if self.non_pcm_auto_mode and self._carried_valid():
           return self.carried_target_conv * speed_conv
+        if self.non_pcm_auto_mode and self.stable_limit_conv > 0:
+          return self.stable_final_ms
         return self._speed_limit_final_last
 
     # Fallback
@@ -242,7 +249,8 @@ class SpeedLimitAssist:
     # Update current velocity offset (error)
     self.v_offset = self._speed_limit_final_last - self.v_ego
 
-    self.speed_limit_final_last_conv = round(self._speed_limit_final_last * speed_conv)
+    self._update_zone_debounce()
+    self.speed_limit_final_last_conv = round(self.stable_final_ms * speed_conv) if self.stable_limit_conv > 0 else 0
     self.v_cruise_cluster_conv = round(self.v_cruise_cluster * speed_conv)
 
     cst_low, cst_high = PCM_LONG_REQUIRED_MAX_SET_SPEED[self.is_metric]
@@ -426,8 +434,33 @@ class SpeedLimitAssist:
     return enabled, active
 
   def _limit_conv(self) -> int:
+    # the DEBOUNCED zone limit: raw resolver values oscillate between adjacent zones on winding
+    # roads (road replay: 60<->80 flapping for minutes); a value must hold ~2 s to become the
+    # working zone. Raw dropouts/flaps never reach the state machine or the carry hooks.
+    return self.stable_limit_conv
+
+  def _update_zone_debounce(self) -> None:
     speed_conv = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
-    return round(self._speed_limit * speed_conv) if self._has_speed_limit else -1
+    raw = round(self._speed_limit * speed_conv) if self._has_speed_limit else -1
+    if raw > 0 and raw == self.stable_limit_conv:
+      self.stable_final_ms = self._speed_limit_final_last  # track offset changes within the zone
+      self._pending_limit_conv = -1
+      self._pending_frames = 0
+    elif raw > 0:
+      if raw == self._pending_limit_conv:
+        self._pending_frames += 1
+      else:
+        self._pending_limit_conv = raw
+        self._pending_frames = 1
+      if self._pending_frames >= int(2.0 / DT_MDL):
+        self.stable_limit_conv = raw
+        self.stable_final_ms = self._speed_limit_final_last
+        self._pending_limit_conv = -1
+        self._pending_frames = 0
+    # raw <= 0 (dropout): hold the stable zone, reset pending
+    else:
+      self._pending_limit_conv = -1
+      self._pending_frames = 0
 
   def _update_curve_assist(self) -> None:
     # Trim the setpoint for the bend ahead (SCC-Vision), independent of zone-override state, then
@@ -469,17 +502,6 @@ class SpeedLimitAssist:
         self.curve_frozen_frames = 0
         return
       if self.curve_engaged or self.curve_restoring:
-        cur, prev = self.v_cruise_cluster_conv, self.prev_v_cruise_cluster_conv
-        if 20 < cur < 300 and 20 < prev < 300 and cur != prev:
-          ref = self.curve_restore_to_conv if (self.curve_restoring and self.curve_restore_to_conv > 0) else self.curve_baseline_conv
-          if ref > 0 and abs(cur - ref) > abs(prev - ref):
-            self.curve_engaged = False
-            self.curve_restoring = False
-            self.curve_baseline_conv = -1
-            self.curve_user_cancelled = True
-            self.curve_frozen_frames = 0
-            return
-      if self.curve_engaged or self.curve_restoring:
         self.curve_frozen_frames += 1
         if self.curve_frozen_frames > int(30. / DT_MDL):
           self.curve_engaged = False
@@ -493,11 +515,8 @@ class SpeedLimitAssist:
     # Expectation must reference OUR commanded target (curve or restore value) -- not the zone
     # target update_calculations just reset -- or ICBM's own walk past the midpoint reads as user.
     if (self.curve_engaged or self.curve_restoring) and self.v_cruise_cluster_changed:
-      ref_conv = self.curve_target_conv if self.curve_engaged else self.curve_baseline_conv
-      step_size = abs(self.v_cruise_cluster_conv - self.prev_v_cruise_cluster_conv)
-      toward = abs(self.v_cruise_cluster_conv - ref_conv) <= abs(self.prev_v_cruise_cluster_conv - ref_conv)
-      # press-truth first; the distance heuristics remain as backstop
-      if self.user_btn_frames > 0 or step_size > 10 or not toward:
+      # press-truth only (see _expected_walk_change): no stalk press, not the user
+      if self.user_btn_frames > 0:
         self.curve_engaged = False
         self.curve_restoring = False
         self.curve_baseline_conv = -1
@@ -535,10 +554,15 @@ class SpeedLimitAssist:
         self.curve_restoring = True
       if self.curve_restoring:
         # if a zone change during the bend lowered the working target below the baseline, restore
-        # only up to it -- walking up to the old baseline just to walk back down is wrong
-        zone_target = self.carried_target_conv if self._carried_valid() else \
-                      (self.speed_limit_final_last_conv if self._has_speed_limit else -1)
-        restore_to = min(self.curve_baseline_conv, zone_target) if zone_target > 0 else self.curve_baseline_conv
+        # only up to it -- but ONLY when the zone structure is in charge (active state). A baseline
+        # from a user-override zone (inactive) is the driver's law and restores in full; capping it
+        # at the zone target silently shaved user overrides (road stall: 100-override capped to 80).
+        if self.state == SpeedLimitAssistState.active:
+          zone_target = self.carried_target_conv if self._carried_valid() else \
+                        (self.speed_limit_final_last_conv if self._has_speed_limit else -1)
+          restore_to = min(self.curve_baseline_conv, zone_target) if zone_target > 0 else self.curve_baseline_conv
+        else:
+          restore_to = self.curve_baseline_conv
         self.curve_restore_to_conv = restore_to
         if zone_in_charge or self.curve_baseline_conv <= 0 or self.v_cruise_cluster_conv >= restore_to:
           # zone target takes over naturally, or we are back at the driver's speed
@@ -552,20 +576,11 @@ class SpeedLimitAssist:
     # (which the cluster may round to a 10s multiple, so any step up to 10 toward the target is
     # plausibly ours). A jump larger than one big press, or any step moving AWAY from the target,
     # is the user.
-    if self.user_btn_frames > 0:
-      return False   # press-truth: the driver's stalk pressed recently -- this change is theirs
-    if abs(self.v_cruise_cluster_conv - self.prev_v_cruise_cluster_conv) > 10:
-      return False
-    # both distances reference the CURRENT target: comparing against the previous frame's target
-    # misclassifies the first press after a zone-change handoff. A short grace window after a
-    # target change also forgives an in-flight press toward the old target.
-    toward = abs(self.v_cruise_cluster_conv - self.target_set_speed_conv) < \
-             abs(self.prev_v_cruise_cluster_conv - self.target_set_speed_conv)
-    # the grace window only forgives an in-flight press toward the PREVIOUS target -- a press away
-    # from both targets is the user (road bug: a user +10 mid-restore was dragged back down)
-    toward_prev = abs(self.v_cruise_cluster_conv - self.prev_target_set_speed_conv) < \
-                  abs(self.prev_v_cruise_cluster_conv - self.prev_target_set_speed_conv)
-    return toward or (self._target_change_frames < 15 and toward_prev)
+    # press-truth ONLY: the driver's presses are directly observable as stock button events and
+    # ICBM's injected presses never appear there. Distance/direction heuristics used to guess --
+    # and road-replay proved they cancel OUR OWN in-flight press at the trim->restore handoff
+    # (setpoints stranded at 82/76/93 with zero buttons pressed). No button, not the user.
+    return self.user_btn_frames <= 0
 
   def _zone_change_carry(self, old_limit_conv: int, new_limit_conv: int, basis_conv: int) -> None:
     # Descending zone change: keep the driver's current relative offset (their setpoint or the
@@ -603,8 +618,7 @@ class SpeedLimitAssist:
           self.carried_target_conv = -1
         else:
           # zone value change while active: carry the running offset downward, configured upward
-          speed_conv = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
-          prev_limit_conv = round(self.speed_limit_prev * speed_conv) if self.speed_limit_prev > 0 else -1
+          prev_limit_conv = self._stable_limit_prev
           if limit_conv > 0 and prev_limit_conv > 0 and limit_conv != prev_limit_conv:
             basis = self.carried_target_conv if self._carried_valid() else self.prev_speed_limit_final_last_conv
             self._zone_change_carry(prev_limit_conv, limit_conv, basis)
@@ -697,6 +711,7 @@ class SpeedLimitAssist:
     self.prev_v_cruise_cluster_conv = self.v_cruise_cluster_conv
     self.prev_speed_limit_final_last_conv = self.speed_limit_final_last_conv
     self.acc_enabled_prev = self.acc_enabled
+    self._stable_limit_prev = self.stable_limit_conv
 
     self.output_v_target = self.get_v_target_from_control()
     self.output_a_target = self.get_a_target_from_control()
