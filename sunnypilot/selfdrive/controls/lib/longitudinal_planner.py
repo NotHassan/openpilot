@@ -25,6 +25,9 @@ LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
 # this long, the car is at the physical limit of the turn RIGHT NOW -- trim speed regardless of
 # what the path prediction says. Clip transients from rate limiting are shorter than the trigger.
 SAT_CLIP_CURV = 2.5e-4         # |desired| - |applied| curvature indicating a real clip (~0.5 deg wheel)
+SAT_UTILIZATION = 0.92         # engage on APPROACH: fraction of the 2.4 m/s2 authority envelope in use
+SAT_LAT_ACCEL_LIM = 2.4        # matches the opendbc steering guard
+SAT_MIN_V = 14.                # m/s; city corners (angle-guard territory) are not this system's job
 SAT_TRIGGER_FRAMES = 10        # 0.5 s at 20 Hz sustained before engaging
 SAT_RELEASE_FRAMES = 20        # 1.0 s clean before releasing
 SAT_TRIM_MS = 3.4              # target = current speed minus ~12 km/h, refreshed while saturated
@@ -73,7 +76,11 @@ class LongitudinalPlannerSP:
     lat_active = sm['carControl'].latActive
     desired_curv = abs(sm['carControl'].actuators.curvature)
     applied_curv = abs(sm['carOutput'].actuatorsOutput.curvature)
-    clipped = lat_active and (desired_curv - applied_curv) > SAT_CLIP_CURV
+    # two ways in: hard evidence (guard clipping = at the limit) or high utilization of the
+    # authority envelope (approaching it -- trim while margin still exists)
+    lat_limit = SAT_LAT_ACCEL_LIM / max(v_ego ** 2, 1.0)
+    near_limit = applied_curv > SAT_UTILIZATION * lat_limit
+    clipped = lat_active and v_ego > SAT_MIN_V and ((desired_curv - applied_curv) > SAT_CLIP_CURV or near_limit)
     if clipped:
       self.sat_frames += 1
       self.sat_clean_frames = 0
