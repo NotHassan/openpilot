@@ -171,7 +171,7 @@ class SpeedLimitAssist:
     speed_conv = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
     # curve assist has priority: it also operates in user-override zones (baseline = user setpoint)
     if not self.pcm_op_long:
-      if self.curve_engaged and self.curve_target_conv > 0:
+      if self.curve_engaged and self.curve_target_conv > 0 and self.acc_enabled:
         return self.curve_target_conv * speed_conv
       if self.curve_restoring and self.curve_baseline_conv > 0:
         restore_to = self.curve_restore_to_conv if self.curve_restore_to_conv > 0 else self.curve_baseline_conv
@@ -453,6 +453,21 @@ class SpeedLimitAssist:
       if self.curve_engaged and not self._curve_active:
         self.curve_engaged = False   # bend ended during the takeover: what's left to do is restore
         self.curve_restoring = True
+      # the driver adjusting the setpoint memory in standby (or SET-engaging a new speed) is law:
+      # a memory change AWAY from our target drops the curve state so the restore can't fight it.
+      # Toward-changes are the standby walker itself. Bounds guard against invalid readings
+      # (memory reads 0/unset around the disengage edges).
+      if self.curve_engaged or self.curve_restoring:
+        cur, prev = self.v_cruise_cluster_conv, self.prev_v_cruise_cluster_conv
+        if 20 < cur < 300 and 20 < prev < 300 and cur != prev:
+          ref = self.curve_restore_to_conv if (self.curve_restoring and self.curve_restore_to_conv > 0) else self.curve_baseline_conv
+          if ref > 0 and abs(cur - ref) > abs(prev - ref):
+            self.curve_engaged = False
+            self.curve_restoring = False
+            self.curve_baseline_conv = -1
+            self.curve_user_cancelled = True
+            self.curve_frozen_frames = 0
+            return
       if self.curve_engaged or self.curve_restoring:
         self.curve_frozen_frames += 1
         if self.curve_frozen_frames > int(30. / DT_MDL):
