@@ -59,10 +59,19 @@ class LongitudinalPlannerSP:
 
     # Speed Limit Assist
     has_speed_limit = self.resolver.speed_limit_valid or self.resolver.speed_limit_last_valid
+    # press-truth: the driver's stalk presses arrive as stock button events (ICBM's own injected
+    # presses never do -- CAN controllers don't receive their own transmissions), so "who changed
+    # the setpoint" needs no step-size guessing
+    BET = structs.CarState.ButtonEvent.Type
+    pressed = {be.type for be in CS.buttonEvents if be.pressed}
+    acc_on = bool(CS.cruiseState.enabled)
+    btn_adjust = bool(pressed & ({BET.accelCruise, BET.decelCruise} |
+                                 ({BET.setCruise, BET.resumeCruise} if acc_on else set())))
+    btn_set_engage = (not acc_on) and BET.setCruise in pressed
     self.sla.update(long_enabled, long_override, v_ego, a_ego, v_cruise_cluster, self.resolver.speed_limit,
                     self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp,
                     curve_v_target=self.scc.vision.output_v_target, curve_active=self.scc.vision.is_active,
-                    acc_enabled=bool(CS.cruiseState.enabled))
+                    acc_enabled=acc_on, user_btn_adjust=btn_adjust, user_btn_set_engage=btn_set_engage)
 
     targets = {
       LongitudinalPlanSource.cruise: (v_cruise, a_ego),

@@ -129,6 +129,7 @@ class SpeedLimitAssist:
     self.carried_target_conv = -1
     self._target_change_frames = 99  # frames since the working target last changed
     self.curve_restore_to_conv = -1  # restore endpoint (baseline capped at the current zone target)
+    self.user_btn_frames = 0         # frames since a genuine driver stalk press (press-truth)
 
     self._plus_hold = 0.
     self._minus_hold = 0.
@@ -457,6 +458,15 @@ class SpeedLimitAssist:
       # a memory change AWAY from our target drops the curve state so the restore can't fight it.
       # Toward-changes are the standby walker itself. Bounds guard against invalid readings
       # (memory reads 0/unset around the disengage edges).
+      if (self.curve_engaged or self.curve_restoring) and self.user_btn_frames > 0:
+        # driver pressed a stalk button during the takeover: their standby adjustment (or
+        # SET-engage speed) is law -- drop the memory (RES-engage sends no adjust flag)
+        self.curve_engaged = False
+        self.curve_restoring = False
+        self.curve_baseline_conv = -1
+        self.curve_user_cancelled = True
+        self.curve_frozen_frames = 0
+        return
       if self.curve_engaged or self.curve_restoring:
         cur, prev = self.v_cruise_cluster_conv, self.prev_v_cruise_cluster_conv
         if 20 < cur < 300 and 20 < prev < 300 and cur != prev:
@@ -485,8 +495,8 @@ class SpeedLimitAssist:
       ref_conv = self.curve_target_conv if self.curve_engaged else self.curve_baseline_conv
       step_size = abs(self.v_cruise_cluster_conv - self.prev_v_cruise_cluster_conv)
       toward = abs(self.v_cruise_cluster_conv - ref_conv) <= abs(self.prev_v_cruise_cluster_conv - ref_conv)
-      # ICBM itself now big-steps +/-10 toward the target; only larger jumps or away-steps are the user
-      if step_size > 10 or not toward:
+      # press-truth first; the distance heuristics remain as backstop
+      if self.user_btn_frames > 0 or step_size > 10 or not toward:
         self.curve_engaged = False
         self.curve_restoring = False
         self.curve_baseline_conv = -1
@@ -541,6 +551,8 @@ class SpeedLimitAssist:
     # (which the cluster may round to a 10s multiple, so any step up to 10 toward the target is
     # plausibly ours). A jump larger than one big press, or any step moving AWAY from the target,
     # is the user.
+    if self.user_btn_frames > 0:
+      return False   # press-truth: the driver's stalk pressed recently -- this change is theirs
     if abs(self.v_cruise_cluster_conv - self.prev_v_cruise_cluster_conv) > 10:
       return False
     # both distances reference the CURRENT target: comparing against the previous frame's target
@@ -636,10 +648,14 @@ class SpeedLimitAssist:
   def update(self, long_enabled: bool, long_override: bool, v_ego: float, a_ego: float, v_cruise_cluster: float, speed_limit: float,
              speed_limit_final_last: float, has_speed_limit: bool, distance: float, events_sp: EventsSP,
              curve_v_target: float = float(V_CRUISE_UNSET), curve_active: bool = False,
-             acc_enabled: bool = True) -> None:
+             acc_enabled: bool = True, user_btn_adjust: bool = False, user_btn_set_engage: bool = False) -> None:
     self._curve_v_target = curve_v_target
     self._curve_active = curve_active
     self.acc_enabled = acc_enabled
+    if user_btn_adjust or user_btn_set_engage:
+      self.user_btn_frames = int(1.0 / DT_MDL)   # driver spoke: latch for the cluster's reaction time
+    else:
+      self.user_btn_frames = max(0, self.user_btn_frames - 1)
     self.long_enabled = long_enabled
     self.v_ego = v_ego
     self.a_ego = a_ego
