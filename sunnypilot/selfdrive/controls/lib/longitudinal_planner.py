@@ -30,7 +30,9 @@ SAT_LAT_ACCEL_LIM = 2.4        # matches the opendbc steering guard
 SAT_MIN_V = 14.                # m/s; city corners (angle-guard territory) are not this system's job
 SAT_TRIGGER_FRAMES = 10        # 0.5 s at 20 Hz sustained before engaging
 SAT_RELEASE_FRAMES = 20        # 1.0 s clean before releasing
-SAT_TRIM_MS = 3.4              # target = current speed minus ~12 km/h, refreshed while saturated
+SAT_TARGET_UTIL = 0.88         # trim to the speed where the CURRENT bend uses this much of the envelope
+SAT_TRIM_MIN_MS = 0.8          # at least ~3 km/h so a trigger always does something
+SAT_TRIM_MAX_MS = 3.4          # at most ~12 km/h per step (deepens per 2.5 s if still clipped)
 
 
 class LongitudinalPlannerSP:
@@ -92,14 +94,18 @@ class LongitudinalPlannerSP:
       if self.sat_clean_frames >= SAT_RELEASE_FRAMES:
         self.sat_frames = 0
         self.sat_active = False
-    if self.sat_frames >= SAT_TRIGGER_FRAMES and not self.sat_active:
+    if (self.sat_frames >= SAT_TRIGGER_FRAMES and not self.sat_active) or \
+       (self.sat_active and self.sat_frames >= SAT_TRIGGER_FRAMES + 50):
+      # trim sized to the bend: the speed where the CURRENT curvature would use SAT_TARGET_UTIL of
+      # the envelope -- a light sweeper sheds ~3 km/h, a sharp one more (bounded). Anchored at
+      # trigger (never chases v_ego down a lead-car slowdown); deepens per 2.5 s only if still
+      # clipped.
+      v_ok = (SAT_TARGET_UTIL * SAT_LAT_ACCEL_LIM / max(applied_curv, 1e-5)) ** 0.5
+      trim = min(max(v_ego - v_ok, SAT_TRIM_MIN_MS), SAT_TRIM_MAX_MS)
+      self.sat_anchor_v = min(self.sat_anchor_v, v_ego - trim) if self.sat_active else (v_ego - trim)
       self.sat_active = True
-      self.sat_anchor_v = v_ego
-    elif self.sat_active and self.sat_frames >= SAT_TRIGGER_FRAMES + 50:
-      # still clipping 2.5 s after the last step: deepen by one more step from current speed
-      self.sat_anchor_v = min(self.sat_anchor_v, v_ego)
       self.sat_frames = SAT_TRIGGER_FRAMES
-    sat_v_target = (self.sat_anchor_v - SAT_TRIM_MS) if self.sat_active else 255.  # 255 = V_CRUISE_UNSET sentinel
+    sat_v_target = self.sat_anchor_v if self.sat_active else 255.  # 255 = V_CRUISE_UNSET sentinel
 
     # Speed Limit Resolver
     self.resolver.update(v_ego, sm)
