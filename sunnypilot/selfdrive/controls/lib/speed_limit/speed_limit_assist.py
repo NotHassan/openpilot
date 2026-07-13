@@ -466,8 +466,11 @@ class SpeedLimitAssist:
     # Trim the setpoint for the bend ahead (SCC-Vision), independent of zone-override state, then
     # restore. Overrides target_set_speed_conv so _expected_walk_change() classifies ICBM's walk
     # toward (and back from) the curve speed as expected -- never as a user override.
-    if not (self.curve_assist_enabled and self.non_pcm_auto_mode and self.enabled):
-      # feature/mode off: hard reset
+    # curve assist is independent of the zone-assist mode: it works off the driver's setpoint
+    # (baseline) even with SpeedLimitMode set to information/warning -- disabling automatic
+    # zone-based setpoint changes must not kill bend trimming
+    if not (self.curve_assist_enabled and self.non_pcm_auto_mode):
+      # feature off: hard reset
       self.curve_engaged = False
       self.curve_restoring = False
       self.curve_baseline_conv = -1
