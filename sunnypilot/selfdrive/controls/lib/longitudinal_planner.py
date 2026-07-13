@@ -21,20 +21,6 @@ DecState = custom.LongitudinalPlanSP.DynamicExperimentalControl.DynamicExperimen
 LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
 
 
-# Steering-saturation feedback: when the lateral authority guard clips the steering command for
-# this long, the car is at the physical limit of the turn RIGHT NOW -- trim speed regardless of
-# what the path prediction says. Clip transients from rate limiting are shorter than the trigger.
-SAT_CLIP_CURV = 2.5e-4         # |desired| - |applied| curvature indicating a real clip (~0.5 deg wheel)
-SAT_UTILIZATION = 0.96         # engage on APPROACH (~2.3 of 2.4 m/s2): routine firm bends run ~2.2 and must not trigger
-SAT_LAT_ACCEL_LIM = 2.4        # matches the opendbc steering guard
-SAT_MIN_V = 14.                # m/s; city corners (angle-guard territory) are not this system's job
-SAT_TRIGGER_FRAMES = 10        # 0.5 s at 20 Hz sustained before engaging
-SAT_RELEASE_FRAMES = 20        # 1.0 s clean before releasing
-SAT_TARGET_UTIL = 0.88         # trim to the speed where the CURRENT bend uses this much of the envelope
-SAT_TRIM_MIN_MS = 0.8          # at least ~3 km/h so a trigger always does something
-SAT_TRIM_MAX_MS = 3.4          # at most ~12 km/h per step (deepens per 2.5 s if still clipped)
-
-
 class LongitudinalPlannerSP:
   def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP, mpc):
     self.events_sp = EventsSP()
@@ -49,12 +35,6 @@ class LongitudinalPlannerSP:
 
     self.output_v_target = 0.
     self.output_a_target = 0.
-    self.sat_frames = 0
-    self.sat_clean_frames = 0
-    self.sat_active = False
-    self.sat_anchor_v = 0.  # v_ego when saturation triggered: the trim target anchors HERE and never
-                            # chases v_ego down (a lead car slowing us mid-bend must not drag the
-                            # setpoint with it -- that is the removed brake-assist failure mode)
 
   def is_e2e(self, sm: messaging.SubMaster) -> bool:
     experimental_mode = sm['selfdriveState'].experimentalMode
@@ -74,39 +54,6 @@ class LongitudinalPlannerSP:
     # Smart Cruise Control
     self.scc.update(sm, long_enabled, long_override, v_ego, a_ego, v_cruise)
 
-    # Steering-saturation feedback (safety net for prediction misses): the steering guard clipping
-    # means the rack is out of authority NOW; feed a speed trim through the same curve-assist
-    # machinery so there is exactly one setpoint authority (baseline/restore/user-press semantics
-    # all apply unchanged).
-    lat_active = sm['carControl'].latActive
-    desired_curv = abs(sm['carControl'].actuators.curvature)
-    applied_curv = abs(sm['carOutput'].actuatorsOutput.curvature)
-    # two ways in: hard evidence (guard clipping = at the limit) or high utilization of the
-    # authority envelope (approaching it -- trim while margin still exists)
-    lat_limit = SAT_LAT_ACCEL_LIM / max(v_ego ** 2, 1.0)
-    near_limit = applied_curv > SAT_UTILIZATION * lat_limit
-    clipped = lat_active and v_ego > SAT_MIN_V and ((desired_curv - applied_curv) > SAT_CLIP_CURV or near_limit)
-    if clipped:
-      self.sat_frames += 1
-      self.sat_clean_frames = 0
-    else:
-      self.sat_clean_frames += 1
-      if self.sat_clean_frames >= SAT_RELEASE_FRAMES:
-        self.sat_frames = 0
-        self.sat_active = False
-    if (self.sat_frames >= SAT_TRIGGER_FRAMES and not self.sat_active) or \
-       (self.sat_active and self.sat_frames >= SAT_TRIGGER_FRAMES + 50):
-      # trim sized to the bend: the speed where the CURRENT curvature would use SAT_TARGET_UTIL of
-      # the envelope -- a light sweeper sheds ~3 km/h, a sharp one more (bounded). Anchored at
-      # trigger (never chases v_ego down a lead-car slowdown); deepens per 2.5 s only if still
-      # clipped.
-      v_ok = (SAT_TARGET_UTIL * SAT_LAT_ACCEL_LIM / max(applied_curv, 1e-5)) ** 0.5
-      trim = min(max(v_ego - v_ok, SAT_TRIM_MIN_MS), SAT_TRIM_MAX_MS)
-      self.sat_anchor_v = min(self.sat_anchor_v, v_ego - trim) if self.sat_active else (v_ego - trim)
-      self.sat_active = True
-      self.sat_frames = SAT_TRIGGER_FRAMES
-    sat_v_target = self.sat_anchor_v if self.sat_active else 255.  # 255 = V_CRUISE_UNSET sentinel
-
     # Speed Limit Resolver
     self.resolver.update(v_ego, sm)
 
@@ -123,8 +70,7 @@ class LongitudinalPlannerSP:
     btn_set_engage = (not acc_on) and BET.setCruise in pressed
     self.sla.update(long_enabled, long_override, v_ego, a_ego, v_cruise_cluster, self.resolver.speed_limit,
                     self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp,
-                    curve_v_target=min(self.scc.vision.output_v_target, sat_v_target),
-                    curve_active=self.scc.vision.is_active or self.sat_active,
+                    curve_v_target=self.scc.vision.output_v_target, curve_active=self.scc.vision.is_active,
                     acc_enabled=acc_on, user_btn_adjust=btn_adjust, user_btn_set_engage=btn_set_engage)
 
     targets = {
