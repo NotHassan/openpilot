@@ -65,9 +65,13 @@ class LongitudinalPlannerSP:
     BET = structs.CarState.ButtonEvent.Type
     pressed = {be.type for be in CS.buttonEvents if be.pressed}
     acc_on = bool(CS.cruiseState.enabled)
-    btn_adjust = bool(pressed & ({BET.accelCruise, BET.decelCruise} |
+    # primary source: the 100Hz-latched flags (button EVENTS are single-frame and this 20Hz
+    # consumer drops ~80% of them -- road bug: driver presses were fought); events kept as fallback
+    cs_sp = sm['carStateSP']
+    btn_adjust = bool(cs_sp.userCruisePressLatched) or \
+                 bool(pressed & ({BET.accelCruise, BET.decelCruise} |
                                  ({BET.setCruise, BET.resumeCruise} if acc_on else set())))
-    btn_set_engage = (not acc_on) and BET.setCruise in pressed
+    btn_set_engage = bool(cs_sp.userSetEngagePressLatched) or ((not acc_on) and BET.setCruise in pressed)
     self.sla.update(long_enabled, long_override, v_ego, a_ego, v_cruise_cluster, self.resolver.speed_limit,
                     self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp,
                     curve_v_target=self.scc.vision.output_v_target, curve_active=self.scc.vision.is_active,

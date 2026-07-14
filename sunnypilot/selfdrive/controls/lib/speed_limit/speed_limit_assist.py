@@ -121,6 +121,8 @@ class SpeedLimitAssist:
     self.curve_target_conv = -1
     self.curve_baseline_conv = -1  # what to walk back to after the bend
     self.curve_user_cancelled = False  # user spoke mid-bend: latched until this bend episode ends
+    self._curve_raise_frames = 0   # ratchet: frames the raw target has been asking to rise
+    self._curve_raise_tick = 0
     self.acc_enabled = False       # stock ACC engaged (cruiseState.enabled)
     self.acc_enabled_prev = False
     self.curve_frozen_frames = 0   # frames spent frozen through a takeover/disengage
@@ -543,12 +545,32 @@ class SpeedLimitAssist:
           self.curve_engaged = True
           self.curve_restoring = False
           self.curve_baseline_conv = baseline
+          self.curve_target_conv = -1
+          self._curve_raise_frames = 0
+          self._curve_raise_tick = 0
       elif zone_in_charge:
         self.curve_baseline_conv = self.target_set_speed_conv  # track zone changes mid-bend
       if self.curve_engaged:
         abs_floor = self.curve_baseline_conv - CURVE_MAX_REDUCTION[self.is_metric]
         capped = max(curve_conv, abs_floor)
-        self.curve_target_conv = min(capped, self.curve_baseline_conv)
+        raw_target = min(capped, self.curve_baseline_conv)
+        # Ratchet: follow the estimate DOWN instantly (safety), but UP only once the higher
+        # estimate persists ~1s, then at ~2 units/s. The raw vision target flickers tens of
+        # units at 20Hz; chasing it froze the setpoint at the momentary minimum and churned
+        # ICBM's direction state into paralysis (road trace: held 70 while estimate read 90).
+        if self.curve_target_conv <= 0 or raw_target < self.curve_target_conv:
+          self.curve_target_conv = raw_target
+          self._curve_raise_frames = 0
+          self._curve_raise_tick = 0
+        elif raw_target >= self.curve_target_conv + 2:
+          self._curve_raise_frames += 1
+          if self._curve_raise_frames >= int(1.0 / DT_MDL):
+            self._curve_raise_tick += 1
+            if self._curve_raise_tick >= int(0.5 / DT_MDL):
+              self.curve_target_conv += 1
+              self._curve_raise_tick = 0
+        else:
+          self._curve_raise_frames = 0
         self.target_set_speed_conv = self.curve_target_conv
     else:
       self.curve_user_cancelled = False  # bend episode over: re-arm for the next one
