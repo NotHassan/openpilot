@@ -62,6 +62,11 @@ V_CRUISE_UNSET = 255.
 # correct, then big-step restore recovers.
 CURVE_MAX_REDUCTION = {True: 45, False: 28}  # kph / mph below baseline (absolute backstop)
 CURVE_MIN_V_EGO = 15.  # m/s (~54 km/h): curve trim only at road speed
+# On winding roads the vision turn state cycles entering->turning->leaving->enabled every few
+# seconds between successive bends; instantly flipping to restore on each micro-gap meant the
+# ICBM spin-up (0.4 s) plus target hysteresis never produced a single press (road forensics,
+# bend B: triggered 3.8 s before entry, zero presses). Hold the trim through short gaps.
+CURVE_GAP_HOLD_S = 2.5
 
 CRUISE_BUTTONS_PLUS = (ButtonType.accelCruise, ButtonType.resumeCruise)
 CRUISE_BUTTONS_MINUS = (ButtonType.decelCruise, ButtonType.setCruise)
@@ -121,6 +126,7 @@ class SpeedLimitAssist:
     self.curve_target_conv = -1
     self.curve_baseline_conv = -1  # what to walk back to after the bend
     self.curve_user_cancelled = False  # user spoke mid-bend: latched until this bend episode ends
+    self.curve_gap_frames = 0          # frames since the curve signal dropped (micro-gap hold)
     self._curve_raise_frames = 0   # ratchet: frames the raw target has been asking to rise
     self._curve_raise_tick = 0
     self.acc_enabled = False       # stock ACC engaged (cruiseState.enabled)
@@ -531,6 +537,7 @@ class SpeedLimitAssist:
     curve_conv = round(self._curve_v_target * speed_conv) if self._curve_active and self._curve_v_target < V_CRUISE_UNSET else -1
 
     if curve_conv > 0 and self.v_ego >= CURVE_MIN_V_EGO:
+      self.curve_gap_frames = 0
       if self.curve_user_cancelled:
         return  # user owns this bend; re-arm only after the curve episode ends
       if not self.curve_engaged:
@@ -573,7 +580,16 @@ class SpeedLimitAssist:
           self._curve_raise_frames = 0
         self.target_set_speed_conv = self.curve_target_conv
     else:
-      self.curve_user_cancelled = False  # bend episode over: re-arm for the next one
+      self.curve_gap_frames += 1
+      in_gap = self.curve_gap_frames <= int(CURVE_GAP_HOLD_S / DT_MDL)
+      if self.curve_engaged and in_gap:
+        # hold the trim through micro-gaps between successive bends: the vision state cycles on
+        # winding roads and an instant flip to restore starved ICBM of a stable target
+        self.target_set_speed_conv = self.curve_target_conv
+        return
+      if in_gap and self.curve_user_cancelled:
+        return  # a micro-gap does not end the episode: the user's cancel holds across it
+      self.curve_user_cancelled = False  # bend episode truly over: re-arm for the next one
       if self.curve_engaged:  # bend done: walk back up
         self.curve_engaged = False
         self.curve_restoring = True
