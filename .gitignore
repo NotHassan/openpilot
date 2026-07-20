@@ -86,6 +86,7 @@ build/
 # agents
 .claude/
 .context/
+.worktrees/
 PLAN.md
 TASK.md
 CLAUDE.md
