@@ -1,14 +1,17 @@
 import json
+import os
 import subprocess
 import sys
 
 import pytest
 
 from cereal import messaging
+from openpilot.common.params import Params
+from openpilot.common.prefix import OpenpilotPrefix
 from openpilot.selfdrive.debug.dump_bend_warning import ROW_KEYS, analyze_messages, main
 from openpilot.selfdrive.debug import run_process_on_route
 from openpilot.selfdrive.debug.run_process_on_route import build_custom_params, parse_param_assignments
-from openpilot.selfdrive.test.process_replay.process_replay import get_process_config
+from openpilot.selfdrive.test.process_replay.process_replay import ProcessContainer, get_process_config
 from openpilot.tools.lib.logreader import LogReader, save_log
 
 
@@ -106,6 +109,8 @@ def test_stable_jsonl_rows_and_episode_summary(tmp_path):
     "earliest_warning_time_s": 12.5,
     "minimum_time_to_bend_by_episode_s": {"1": 5.5, "2": 4.0},
     "warnings_below_50_kph": 0,
+    "warning_entries_below_50_kph": 0,
+    "warnings_below_45_kph": 0,
     "warnings_lateral_inactive": 0,
     "repeated_episode_sounds": 0,
   }
@@ -161,6 +166,8 @@ def test_safety_counts_follow_serialized_event_not_diagnostic_state():
   _, summary = analyze_messages(messages)
 
   assert summary["warnings_below_50_kph"] == 1
+  assert summary["warning_entries_below_50_kph"] == 1
+  assert summary["warnings_below_45_kph"] == 0
   assert summary["warnings_lateral_inactive"] == 1
 
 
@@ -168,7 +175,11 @@ def test_safety_counts_follow_serialized_event_not_diagnostic_state():
   "messages, expected_field",
   [
     ([bend_warning_message(1.0, state="warning", source="map", episode=1, current_speed_kph=49.9)],
-     "warnings_below_50_kph"),
+     "warning_entries_below_50_kph"),
+    ([
+      bend_warning_message(1.0, state="warning", source="map", episode=1, current_speed_kph=50.1),
+      bend_warning_message(2.0, state="clearing", source="map", episode=1, current_speed_kph=44.9),
+    ], "warnings_below_45_kph"),
     ([bend_warning_message(1.0, state="warning", source="vision", episode=1, lateral_active=False)],
      "warnings_lateral_inactive"),
     ([
@@ -187,6 +198,24 @@ def test_safety_violations_return_nonzero(tmp_path, messages, expected_field):
   _, summary = analyze_messages(messages)
   assert summary[expected_field] > 0
   assert len(output_jsonl.read_text().splitlines()) == len(messages)
+
+
+def test_active_warning_may_continue_through_speed_hysteresis(tmp_path):
+  input_log = tmp_path / "hysteresis.zst"
+  output_jsonl = tmp_path / "hysteresis.jsonl"
+  messages = [
+    bend_warning_message(1.0, state="warning", source="map", episode=1, current_speed_kph=50.48),
+    bend_warning_message(2.0, state="clearing", source="map", episode=1, current_speed_kph=49.0),
+    bend_warning_message(3.0, state="clearing", source="map", episode=1, current_speed_kph=45.17),
+    bend_warning_message(4.0, state="idle", source="none", episode=1, current_speed_kph=44.0),
+  ]
+  save_log(str(input_log), messages)
+
+  assert main([str(input_log), "--jsonl", str(output_jsonl)]) == 0
+  _, summary = analyze_messages(messages)
+  assert summary["warnings_below_50_kph"] == 2
+  assert summary["warning_entries_below_50_kph"] == 0
+  assert summary["warnings_below_45_kph"] == 0
 
 
 def test_cli_writes_stable_jsonl_and_prints_summary(tmp_path):
@@ -222,6 +251,44 @@ def test_replay_override_merge_and_captured_output(monkeypatch):
 
   assert custom_params == {"CarParamsPrevRoute": b"recorded", "PredictiveBendWarning": b"1"}
   assert "longitudinalPlanSP" in get_process_config("plannerd").subs
+
+
+def test_process_replay_writes_typed_bool_bytes_to_temporary_params():
+  container = ProcessContainer(get_process_config("plannerd"))
+  try:
+    with OpenpilotPrefix():
+      container._setup_env({"PredictiveBendWarning": b"1"}, {})
+      assert Params().get_bool("PredictiveBendWarning") is True
+  finally:
+    os.environ.pop("PROC_NAME", None)
+    os.environ.pop("SIMULATION", None)
+
+
+def test_process_replay_rejects_invalid_typed_bool_bytes():
+  container = ProcessContainer(get_process_config("plannerd"))
+  try:
+    with OpenpilotPrefix():
+      with pytest.raises(ValueError, match=r"PredictiveBendWarning.*expected.*0.*1"):
+        container._setup_env({"PredictiveBendWarning": b"true"}, {})
+  finally:
+    os.environ.pop("PROC_NAME", None)
+    os.environ.pop("SIMULATION", None)
+
+
+def test_process_replay_stop_handles_setup_failure_before_context_start(monkeypatch):
+  container = ProcessContainer(get_process_config("plannerd"))
+  calls = []
+  monkeypatch.setattr(container.process, "signal", lambda sig: calls.append(("signal", sig)))
+  monkeypatch.setattr(container.process, "stop", lambda: calls.append(("stop", None)))
+  with container.prefix:
+    container.prefix.create_dirs()
+    with pytest.raises(ValueError):
+      container._setup_env({"PredictiveBendWarning": b"invalid"}, {"TASK6_TEST_ENV": "set"})
+
+  container.stop()
+
+  assert [name for name, _ in calls] == ["signal", "stop"]
+  assert "TASK6_TEST_ENV" not in os.environ
 
 
 @pytest.mark.parametrize("assignment", ["PredictiveBendWarning", "=1"])

@@ -20,7 +20,7 @@ from cereal.services import SERVICE_LIST
 from msgq.visionipc import VisionIpcServer, get_endpoint_name as vipc_get_endpoint_name
 from opendbc.car.can_definitions import CanData
 from opendbc.car.car_helpers import get_car, interfaces
-from openpilot.common.params import Params
+from openpilot.common.params import Params, ParamKeyType
 from openpilot.common.prefix import OpenpilotPrefix
 from openpilot.common.timeout import Timeout
 from openpilot.common.realtime import DT_CTRL
@@ -168,7 +168,7 @@ class ProcessContainer:
     return self.cfg.subs
 
   def _clean_env(self):
-    for k in self.environ_config.keys():
+    for k in (self.environ_config or {}).keys():
       if k in os.environ:
         del os.environ[k]
 
@@ -189,14 +189,18 @@ class ProcessContainer:
     elif "SIMULATION" in os.environ:
       del os.environ["SIMULATION"]
 
+    self.environ_config = environ_config
+
     params = Params()
     for k, v in params_config.items():
       if isinstance(v, bool):
         params.put_bool(k, v, block=True)
+      elif isinstance(v, bytes) and params.get_type(k) == ParamKeyType.BOOL:
+        if v not in (b"0", b"1"):
+          raise ValueError(f"invalid boolean parameter value for {k}: {v!r}; expected b'0' or b'1'")
+        params.put_bool(k, v == b"1", block=True)
       else:
         params.put(k, v, block=True)
-
-    self.environ_config = environ_config
 
   def _setup_vision_ipc(self, all_msgs: LogIterable, frs: dict[str, Any]):
     assert len(self.cfg.vision_pubs) != 0
@@ -256,7 +260,8 @@ class ProcessContainer:
     with self.prefix:
       self.process.signal(signal.SIGKILL)
       self.process.stop()
-      self.rc.close_context()
+      if self.rc is not None:
+        self.rc.close_context()
       self.prefix.clean_dirs()
       self._clean_env()
 
