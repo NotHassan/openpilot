@@ -249,14 +249,14 @@ class PredictiveBendWarning:
     vision_prediction = self._evaluate_vision(v_ego, model_data)
     source, selected = self._fuse(map_prediction, vision_prediction)
     unsafe = selected is not None
-    candidate = unsafe and 0.0 <= selected.time_to_bend <= MAX_TIME_TO_BEND
+    in_window_risk = unsafe and 0.0 < selected.time_to_bend <= MAX_TIME_TO_BEND
 
     if self.state == WarningState.idle:
-      if candidate:
+      if in_window_risk:
         self.state = WarningState.candidate
         self.candidate_frames = 1
     elif self.state == WarningState.candidate:
-      if not candidate:
+      if not in_window_risk:
         self._reset_state()
       else:
         self.candidate_frames += 1
@@ -264,11 +264,11 @@ class PredictiveBendWarning:
           self.state = WarningState.warning
           self.episode += 1
     elif self.state == WarningState.warning:
-      if not unsafe:
+      if not in_window_risk:
         self.state = WarningState.clearing
         self.clear_frames = 1
     elif self.state == WarningState.clearing:
-      if unsafe:
+      if in_window_risk:
         self.state = WarningState.warning
         self.clear_frames = 0
       else:

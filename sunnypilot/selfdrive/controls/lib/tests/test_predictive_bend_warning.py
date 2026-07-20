@@ -264,6 +264,62 @@ def test_source_dropout_enters_clearing_and_rearms_after_exactly_three_seconds()
   assert output.episode == 2
 
 
+def test_out_of_window_unsafe_prediction_during_warning_enters_clearing():
+  controller = PredictiveBendWarning(enabled=True)
+  advance_to_warning(controller)
+
+  output = controller.update(
+    True, V_EGO, map_preview(distance=V_EGO * 9.0), empty_model(),
+  )
+
+  assert output.map_prediction.unsafe
+  assert output.time_to_bend == pytest.approx(9.0)
+  assert output.state == WarningState.clearing
+  assert output.emit_event
+
+
+def test_out_of_window_unsafe_prediction_during_clearing_does_not_revive_warning():
+  controller = PredictiveBendWarning(enabled=True)
+  advance_to_warning(controller)
+  output = controller.update(True, V_EGO, map_preview(valid=False), empty_model())
+  assert output.state == WarningState.clearing
+
+  output = controller.update(
+    True, V_EGO, map_preview(distance=V_EGO * 9.0), empty_model(),
+  )
+
+  assert output.map_prediction.unsafe
+  assert output.state == WarningState.clearing
+  assert output.emit_event
+  assert output.episode == 1
+
+
+def test_out_of_window_risk_holds_event_only_for_normal_clearing_grace_then_rearms():
+  controller = PredictiveBendWarning(enabled=True)
+  assert advance_to_warning(controller).episode == 1
+
+  for _ in range(CLEAR_FRAMES - 1):
+    output = controller.update(
+      True, V_EGO, map_preview(distance=V_EGO * 9.0), empty_model(),
+    )
+    assert output.state == WarningState.clearing
+    assert output.emit_event
+    assert output.episode == 1
+
+  output = controller.update(
+    True, V_EGO, map_preview(distance=V_EGO * 9.0), empty_model(),
+  )
+  assert output.state == WarningState.idle
+  assert not output.emit_event
+  assert output.episode == 1
+  assert output.map_prediction.unsafe
+
+  output = advance_to_warning(controller, map_preview(distance=V_EGO * 4.0))
+  assert output.state == WarningState.warning
+  assert output.emit_event
+  assert output.episode == 2
+
+
 def test_connected_bends_stay_in_one_episode_without_a_second_entry():
   controller = PredictiveBendWarning(enabled=True)
   assert advance_to_warning(controller).episode == 1
