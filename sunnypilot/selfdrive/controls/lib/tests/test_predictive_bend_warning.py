@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
 from openpilot.sunnypilot.models.constants import ModelConstants
 from openpilot.sunnypilot.selfdrive.controls.lib.predictive_bend_warning import (
@@ -24,6 +25,14 @@ from openpilot.sunnypilot.selfdrive.controls.lib.predictive_bend_warning import 
 V_EGO = 30.0
 UNSAFE_CURVATURE = 0.004
 SAFE_CURVATURE = 0.001
+
+
+def test_parameter_is_registered_default_off():
+  params = Params()
+  params.remove("PredictiveBendWarning")
+
+  assert not params.get_bool("PredictiveBendWarning")
+  assert params.get("PredictiveBendWarning", return_default=True) is False
 
 
 def map_preview(curvature=UNSAFE_CURVATURE, distance=150.0, *, valid=True, rejection_reason="none"):

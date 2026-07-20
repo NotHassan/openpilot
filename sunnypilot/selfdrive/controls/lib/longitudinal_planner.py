@@ -8,13 +8,17 @@ See the LICENSE.md file in the root directory for more details.
 from cereal import messaging, custom
 from opendbc.car import structs
 from openpilot.common.constants import CV
+from openpilot.common.params import Params
+from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX
+from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD
 from openpilot.sunnypilot.selfdrive.controls.lib.dec.dec import DynamicExperimentalController
 from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper
+from openpilot.sunnypilot.selfdrive.controls.lib.predictive_bend_warning import BendWarningOutput, PredictiveBendWarning
 from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.smart_cruise_control import SmartCruiseControl
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import SpeedLimitAssist
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_resolver import SpeedLimitResolver
-from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
+from openpilot.sunnypilot.selfdrive.selfdrived.events import EventNameSP, EventsSP
 from openpilot.sunnypilot.models.helpers import get_active_bundle
 
 DecState = custom.LongitudinalPlanSP.DynamicExperimentalControl.DynamicExperimentalControlState
@@ -41,6 +45,11 @@ class LongitudinalPlannerSP:
     self.generation = int(model_bundle.generation) if (model_bundle := get_active_bundle()) else None
     self.source = LongitudinalPlanSource.cruise
     self.e2e_alerts_helper = E2EAlertsHelper()
+    self.params = Params()
+    bend_warning_enabled = self.params.get_bool("PredictiveBendWarning")
+    self.predictive_bend_warning = PredictiveBendWarning(bend_warning_enabled)
+    self.bend_warning_output = BendWarningOutput(enabled=bend_warning_enabled)
+    self.frame = 0
 
     self.output_v_target = 0.
     self.output_a_target = 0.
@@ -110,8 +119,22 @@ class LongitudinalPlannerSP:
 
   def update(self, sm: messaging.SubMaster) -> None:
     self.events_sp.clear()
+    if self.frame % int(PARAMS_UPDATE_PERIOD / DT_MDL) == 0:
+      self.predictive_bend_warning.enabled = self.params.get_bool("PredictiveBendWarning")
+
+    CS = sm["carState"]
+    self.bend_warning_output = self.predictive_bend_warning.update(
+      sm["carControl"].latActive,
+      CS.vEgo,
+      CS.cruiseState.bendPreview,
+      sm["modelV2"],
+    )
+    if self.bend_warning_output.emit_event:
+      self.events_sp.add(EventNameSP.predictiveBendWarning)
+
     self.dec.update(sm)
     self.e2e_alerts_helper.update(sm, self.events_sp)
+    self.frame += 1
 
   def publish_longitudinal_plan_sp(self, sm: messaging.SubMaster, pm: messaging.PubMaster) -> None:
     plan_sp_send = messaging.new_message('longitudinalPlanSP')
@@ -172,5 +195,23 @@ class LongitudinalPlannerSP:
     e2eAlerts = longitudinalPlanSP.e2eAlerts
     e2eAlerts.greenLightAlert = self.e2e_alerts_helper.green_light_alert
     e2eAlerts.leadDepartAlert = self.e2e_alerts_helper.lead_depart_alert
+
+    # Predictive Bend Warning diagnostics
+    bendWarning = longitudinalPlanSP.bendWarning
+    bendWarning.enabled = self.bend_warning_output.enabled
+    bendWarning.lateralActive = self.bend_warning_output.lateral_active
+    bendWarning.state = self.bend_warning_output.state.name
+    bendWarning.source = self.bend_warning_output.source.name
+    bendWarning.mapValid = self.bend_warning_output.map_valid
+    bendWarning.visionValid = self.bend_warning_output.vision_valid
+    bendWarning.curvature = float(self.bend_warning_output.curvature)
+    bendWarning.distance = float(self.bend_warning_output.distance)
+    bendWarning.timeToBend = float(self.bend_warning_output.time_to_bend)
+    bendWarning.requiredLateralAccel = float(self.bend_warning_output.required_lateral_accel)
+    bendWarning.safeSpeed = float(self.bend_warning_output.safe_speed)
+    bendWarning.currentSpeed = float(self.bend_warning_output.current_speed)
+    bendWarning.candidateTime = float(self.bend_warning_output.candidate_time)
+    bendWarning.episode = self.bend_warning_output.episode
+    bendWarning.rejectionReason = self.bend_warning_output.rejection_reason.name
 
     pm.send('longitudinalPlanSP', plan_sp_send)

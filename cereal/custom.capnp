@@ -194,6 +194,7 @@ struct LongitudinalPlanSP @0xf35cc4560bbf6ec2 {
   aTarget @5 :Float32;
   events @6 :List(OnroadEventSP.Event);
   e2eAlerts @7 :E2eAlerts;
+  bendWarning @8 :BendWarning;
 
   struct DynamicExperimentalControl {
     state @0 :DynamicExperimentalControlState;
@@ -296,6 +297,53 @@ struct LongitudinalPlanSP @0xf35cc4560bbf6ec2 {
     greenLightAlert @0 :Bool;
     leadDepartAlert @1 :Bool;
   }
+
+  struct BendWarning {
+    enabled @0 :Bool;
+    lateralActive @1 :Bool;
+    state @2 :State;
+    source @3 :Source;
+    mapValid @4 :Bool;
+    visionValid @5 :Bool;
+    curvature @6 :Float32;
+    distance @7 :Float32;
+    timeToBend @8 :Float32;
+    requiredLateralAccel @9 :Float32;
+    safeSpeed @10 :Float32;
+    currentSpeed @11 :Float32;
+    candidateTime @12 :Float32;
+    episode @13 :UInt32;
+    rejectionReason @14 :RejectionReason;
+
+    enum State {
+      idle @0;
+      candidate @1;
+      warning @2;
+      clearing @3;
+    }
+
+    enum Source {
+      none @0;
+      map @1;
+      vision @2;
+      both @3;
+    }
+
+    enum RejectionReason {
+      none @0;
+      disabled @1;
+      lateralInactive @2;
+      belowSpeed @3;
+      sourceUnavailable @4;
+      ambiguousLocation @5;
+      locationError @6;
+      ambiguousPath @7;
+      staleSegment @8;
+      invalidCurvature @9;
+      invalidDistance @10;
+      sanityFilter @11;
+    }
+  }
 }
 
 struct OnroadEventSP @0xda96579883444c35 {
@@ -342,6 +390,7 @@ struct OnroadEventSP @0xda96579883444c35 {
     speedLimitChanged @21;
     speedLimitPending @22;
     e2eChime @23;
+    predictiveBendWarning @24;
   }
 }
 
