@@ -31,15 +31,21 @@ ROW_KEYS = [
   "event_active",
 ]
 
-EVENT_STATES = {"warning", "clearing"}
-
 
 def _enum_name(value: Any) -> str:
   return str(value)
 
 
+def _event_active(plan: Any) -> bool:
+  return any(
+    _enum_name(event.name) == "predictiveBendWarning" and bool(event.warning)
+    for event in plan.events
+  )
+
+
 def row_from_message(msg: Any) -> dict[str, Any]:
-  warning = msg.longitudinalPlanSP.bendWarning
+  plan = msg.longitudinalPlanSP
+  warning = plan.bendWarning
   state = _enum_name(warning.state)
   return {
     "mono_time_s": msg.logMonoTime / 1e9,
@@ -58,7 +64,7 @@ def row_from_message(msg: Any) -> dict[str, Any]:
     "candidate_time_s": float(warning.candidateTime),
     "episode": int(warning.episode),
     "rejection_reason": _enum_name(warning.rejectionReason),
-    "event_active": state in EVENT_STATES,
+    "event_active": _event_active(plan),
   }
 
 

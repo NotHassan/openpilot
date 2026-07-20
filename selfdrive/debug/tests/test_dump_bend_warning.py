@@ -24,10 +24,14 @@ def bend_warning_message(
   map_valid: bool = True,
   vision_valid: bool = False,
   time_to_bend_s: float = 6.0,
+  serialized_event: bool | None = None,
+  event_name: str = "predictiveBendWarning",
+  event_warning: bool = True,
 ):
   msg = messaging.new_message("longitudinalPlanSP")
   msg.logMonoTime = int(mono_time_s * 1e9)
-  warning = msg.longitudinalPlanSP.bendWarning
+  plan = msg.longitudinalPlanSP
+  warning = plan.bendWarning
   warning.enabled = True
   warning.lateralActive = lateral_active
   warning.state = state
@@ -43,6 +47,12 @@ def bend_warning_message(
   warning.candidateTime = 0.5
   warning.episode = episode
   warning.rejectionReason = rejection_reason
+  if serialized_event is None:
+    serialized_event = state in {"warning", "clearing"}
+  if serialized_event:
+    [event] = plan.init("events", 1)
+    event.name = event_name
+    event.warning = event_warning
   return msg.as_reader()
 
 
@@ -109,6 +119,49 @@ def test_invalid_preview_sample_is_not_dropped():
   assert rows[0]["source"] == "map"
   assert rows[0]["rejection_reason"] == "ambiguousPath"
   assert summary["total_samples"] == 1
+
+
+@pytest.mark.parametrize(
+  "message, expected_active",
+  [
+    (bend_warning_message(1.0, state="warning", source="map", episode=1, serialized_event=False), False),
+    (bend_warning_message(1.0, state="idle", source="map", episode=1, serialized_event=True), True),
+    (bend_warning_message(1.0, state="warning", source="map", episode=1,
+                          serialized_event=True, event_warning=False), False),
+    (bend_warning_message(1.0, state="warning", source="map", episode=1,
+                          serialized_event=True, event_name="speedLimitActive"), False),
+  ],
+)
+def test_event_active_comes_from_serialized_warning_event(message, expected_active):
+  rows, _ = analyze_messages([message])
+  assert rows[0]["event_active"] is expected_active
+
+
+def test_repeated_serialized_event_entry_in_one_episode_is_counted():
+  messages = [
+    bend_warning_message(1.0, state="warning", source="map", episode=1, serialized_event=True),
+    bend_warning_message(2.0, state="warning", source="map", episode=1, serialized_event=False),
+    bend_warning_message(3.0, state="clearing", source="map", episode=1, serialized_event=True),
+  ]
+
+  _, summary = analyze_messages(messages)
+
+  assert summary["event_entries"] == 2
+  assert summary["repeated_episode_sounds"] == 1
+
+
+def test_safety_counts_follow_serialized_event_not_diagnostic_state():
+  messages = [
+    bend_warning_message(1.0, state="warning", episode=1, current_speed_kph=49.0,
+                         lateral_active=False, serialized_event=False),
+    bend_warning_message(2.0, state="idle", episode=2, current_speed_kph=49.0,
+                         lateral_active=False, serialized_event=True),
+  ]
+
+  _, summary = analyze_messages(messages)
+
+  assert summary["warnings_below_50_kph"] == 1
+  assert summary["warnings_lateral_inactive"] == 1
 
 
 @pytest.mark.parametrize(
