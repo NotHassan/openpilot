@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import subprocess
@@ -11,7 +12,7 @@ from openpilot.common.prefix import OpenpilotPrefix
 from openpilot.selfdrive.debug.dump_bend_warning import ROW_KEYS, analyze_messages, main
 from openpilot.selfdrive.debug import run_process_on_route
 from openpilot.selfdrive.debug.run_process_on_route import build_custom_params, parse_param_assignments
-from openpilot.selfdrive.test.process_replay.process_replay import ProcessContainer, get_process_config
+from openpilot.selfdrive.test.process_replay.process_replay import ProcessContainer, get_process_config, replay_process
 from openpilot.tools.lib.logreader import LogReader, save_log
 
 
@@ -253,26 +254,88 @@ def test_replay_override_merge_and_captured_output(monkeypatch):
   assert "longitudinalPlanSP" in get_process_config("plannerd").subs
 
 
-def test_process_replay_writes_typed_bool_bytes_to_temporary_params():
+def test_process_replay_decodes_typed_param_bytes_in_temporary_params():
   container = ProcessContainer(get_process_config("plannerd"))
+  timestamp = datetime.datetime(2026, 7, 20, 12, 34, 56, tzinfo=datetime.UTC)
   try:
     with OpenpilotPrefix():
-      container._setup_env({"PredictiveBendWarning": b"1"}, {})
-      assert Params().get_bool("PredictiveBendWarning") is True
+      container._setup_env({
+        "PredictiveBendWarning": b"1",
+        "GitBranch": b"codex/test",
+        "BootCount": b"42",
+        "UptimeOnroad": b"12.5",
+        "LastUpdateTime": timestamp.isoformat().encode(),
+        "CarList": b'["VW","mock"]',
+        "CarParamsPrevRoute": b"\x00\xff",
+      }, {})
+      params = Params()
+      assert params.get_bool("PredictiveBendWarning") is True
+      assert params.get("GitBranch") == "codex/test"
+      assert params.get("BootCount") == 42
+      assert params.get("UptimeOnroad") == pytest.approx(12.5)
+      assert params.get("LastUpdateTime") == timestamp
+      assert params.get("CarList") == ["VW", "mock"]
+      assert params.get("CarParamsPrevRoute") == b"\x00\xff"
   finally:
     os.environ.pop("PROC_NAME", None)
     os.environ.pop("SIMULATION", None)
 
 
-def test_process_replay_rejects_invalid_typed_bool_bytes():
+@pytest.mark.parametrize(
+  "key, value, expected_type",
+  [
+    ("PredictiveBendWarning", b"true", "BOOL"),
+    ("GitBranch", b"\xff", "STRING"),
+    ("BootCount", b"4.2", "INT"),
+    ("UptimeOnroad", b"soon", "FLOAT"),
+    ("LastUpdateTime", b"yesterday", "TIME"),
+    ("CarList", b"null", "JSON"),
+  ],
+)
+def test_process_replay_rejects_invalid_typed_param_bytes(key, value, expected_type):
   container = ProcessContainer(get_process_config("plannerd"))
   try:
     with OpenpilotPrefix():
-      with pytest.raises(ValueError, match=r"PredictiveBendWarning.*expected.*0.*1"):
-        container._setup_env({"PredictiveBendWarning": b"true"}, {})
+      with pytest.raises(ValueError) as exc_info:
+        container._setup_env({key: value}, {})
+      error = str(exc_info.value)
+      assert key in error
+      assert expected_type in error
+      assert repr(value) in error
   finally:
     os.environ.pop("PROC_NAME", None)
     os.environ.pop("SIMULATION", None)
+
+
+def test_process_replay_rejects_unknown_custom_param_key():
+  container = ProcessContainer(get_process_config("plannerd"))
+  try:
+    with OpenpilotPrefix():
+      with pytest.raises(ValueError, match=r"unknown parameter key.*NotARealParam"):
+        container._setup_env({"NotARealParam": b"value"}, {})
+  finally:
+    os.environ.pop("PROC_NAME", None)
+    os.environ.pop("SIMULATION", None)
+
+
+def test_capture_enabled_orchestration_preserves_param_setup_error():
+  captured_output = {}
+
+  with pytest.raises(ValueError) as exc_info:
+    replay_process(
+      get_process_config("plannerd"),
+      [],
+      fingerprint="MOCK",
+      custom_params={"PredictiveBendWarning": b"invalid"},
+      captured_output_store=captured_output,
+      disable_progress=True,
+    )
+
+  error = str(exc_info.value)
+  assert "PredictiveBendWarning" in error
+  assert "BOOL" in error
+  assert "invalid" in error
+  assert captured_output == {}
 
 
 def test_process_replay_stop_handles_setup_failure_before_context_start(monkeypatch):

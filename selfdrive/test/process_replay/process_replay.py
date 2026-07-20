@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import datetime
+import json
 import os
 import time
 import copy
@@ -20,7 +22,7 @@ from cereal.services import SERVICE_LIST
 from msgq.visionipc import VisionIpcServer, get_endpoint_name as vipc_get_endpoint_name
 from opendbc.car.can_definitions import CanData
 from opendbc.car.car_helpers import get_car, interfaces
-from openpilot.common.params import Params, ParamKeyType
+from openpilot.common.params import Params, ParamKeyType, UnknownKeyName
 from openpilot.common.prefix import OpenpilotPrefix
 from openpilot.common.timeout import Timeout
 from openpilot.common.realtime import DT_CTRL
@@ -47,6 +49,38 @@ class LauncherWithCapture:
   def __call__(self, *args, **kwargs):
     self.capture.link_with_current_proc()
     self.launcher(*args, **kwargs)
+
+
+def _decode_param_bytes(params: Params, key: str, value: bytes) -> Any:
+  try:
+    param_type = params.get_type(key)
+  except UnknownKeyName as error:
+    raise ValueError(f"unknown parameter key {key!r} for value {value!r}") from error
+
+  try:
+    if param_type == ParamKeyType.STRING:
+      return value.decode("utf-8")
+    if param_type == ParamKeyType.BOOL:
+      if value not in (b"0", b"1"):
+        raise ValueError("expected b'0' or b'1'")
+      return value == b"1"
+    if param_type == ParamKeyType.INT:
+      return int(value)
+    if param_type == ParamKeyType.FLOAT:
+      return float(value)
+    if param_type == ParamKeyType.TIME:
+      return datetime.datetime.fromisoformat(value.decode("utf-8"))
+    if param_type == ParamKeyType.JSON:
+      decoded = json.loads(value)
+      if not isinstance(decoded, (dict, list)):
+        raise TypeError("expected a JSON object or array")
+      return decoded
+    if param_type == ParamKeyType.BYTES:
+      return value
+  except (TypeError, ValueError, UnicodeDecodeError) as error:
+    raise ValueError(f"invalid {param_type.name} parameter value for {key}: {value!r}") from error
+
+  raise ValueError(f"unsupported parameter type {param_type!r} for {key}: {value!r}")
 
 
 class ReplayContext:
@@ -193,12 +227,10 @@ class ProcessContainer:
 
     params = Params()
     for k, v in params_config.items():
+      if isinstance(v, bytes):
+        v = _decode_param_bytes(params, k, v)
       if isinstance(v, bool):
         params.put_bool(k, v, block=True)
-      elif isinstance(v, bytes) and params.get_type(k) == ParamKeyType.BOOL:
-        if v not in (b"0", b"1"):
-          raise ValueError(f"invalid boolean parameter value for {k}: {v!r}; expected b'0' or b'1'")
-        params.put_bool(k, v == b"1", block=True)
       else:
         params.put(k, v, block=True)
 
@@ -744,8 +776,7 @@ def _replay_multi_process(
   finally:
     for container in containers:
       container.stop()
-      if captured_output_store is not None:
-        assert container.capture is not None
+      if captured_output_store is not None and container.capture is not None:
         out, err = container.capture.read_outerr()
         captured_output_store[container.cfg.proc_name] = {"out": out, "err": err}
 
