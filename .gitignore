@@ -87,6 +87,7 @@ build/
 .claude/
 .context/
 .worktrees/
+.superpowers/
 PLAN.md
 TASK.md
 CLAUDE.md
