@@ -27,7 +27,7 @@ class ICTogglesLayoutMici(NavScroller):
     sl_auto_mode                = BigParamControl("Speed Limit Assist: Auto Mode", "SpeedLimitNonPcmAutoMode")
     sl_hybrid_offset            = BigParamControl("Speed Limit Offset: Hybrid", "SpeedLimitHybridOffset")
     pid_lane_gate               = BigParamControl("Curvature PID: Lane Confidence Gate", "CurvaturePidLaneGate")
-    curve_speed_assist          = BigParamControl("Curve Speed Assist", "CurveSpeedAssist")
+    predictive_bend_warning     = BigParamControl("Predictive Bend Warning", "PredictiveBendWarning")
     auto_detect_unit            = BigParamControl("Match Car's Units (km/h / mph)", "AutoDetectUnit")
     icbm_sl_only                = BigParamControl("Cruise Buttons: Speed Limit Only", "IcbmSpeedLimitOnly")
 
@@ -49,7 +49,7 @@ class ICTogglesLayoutMici(NavScroller):
       sl_auto_mode,
       sl_hybrid_offset,
       pid_lane_gate,
-      curve_speed_assist,
+      predictive_bend_warning,
       auto_detect_unit,
       icbm_sl_only,
       show_curvatured_graph,
@@ -74,7 +74,7 @@ class ICTogglesLayoutMici(NavScroller):
       ("SpeedLimitNonPcmAutoMode", sl_auto_mode),
       ("SpeedLimitHybridOffset", sl_hybrid_offset),
       ("CurvaturePidLaneGate", pid_lane_gate),
-      ("CurveSpeedAssist", curve_speed_assist),
+      ("PredictiveBendWarning", predictive_bend_warning),
       ("AutoDetectUnit", auto_detect_unit),
       ("IcbmSpeedLimitOnly", icbm_sl_only),
       ("ShowDynamicSteeringLearnerGraph", show_curvatured_graph),

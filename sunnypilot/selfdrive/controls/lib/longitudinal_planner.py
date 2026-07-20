@@ -25,21 +25,12 @@ DecState = custom.LongitudinalPlanSP.DynamicExperimentalControl.DynamicExperimen
 LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
 
 
-# PSD early-hint layer: nav road curvature sees bends hundreds of meters beyond the ~190 m camera
-# horizon. A hint alone starts a BOUNDED trim (max ~10 km/h below the setpoint at hint onset) and,
-# once acting, rides through the hinted bend and restores through the normal gradual walk -- never
-# a snap release on disagreement (a sudden speed-up toward what the driver judges as a bend is
-# dangerous). Vision remains the authority: when it confirms, its deeper target takes over via min().
-HINT_MIN_V_EGO = 27.       # m/s (~100 km/h): the regime where the camera horizon is insufficient
-HINT_MAX_TRIM_MS = 2.78    # ~10 km/h: an unconfirmed hint can never trim more than this
-
-
 class LongitudinalPlannerSP:
   def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP, mpc):
     self.events_sp = EventsSP()
     self.resolver = SpeedLimitResolver()
     self.dec = DynamicExperimentalController(CP, mpc)
-    self.scc = SmartCruiseControl(CP)
+    self.scc = SmartCruiseControl()
     self.resolver = SpeedLimitResolver()
     self.sla = SpeedLimitAssist(CP, CP_SP)
     self.generation = int(model_bundle.generation) if (model_bundle := get_active_bundle()) else None
@@ -53,8 +44,6 @@ class LongitudinalPlannerSP:
 
     self.output_v_target = 0.
     self.output_a_target = 0.
-    self.hint_anchor_v = 0.
-    self.hint_was_active = False
 
   def is_e2e(self, sm: messaging.SubMaster) -> bool:
     experimental_mode = sm['selfdriveState'].experimentalMode
@@ -77,14 +66,6 @@ class LongitudinalPlannerSP:
     # Speed Limit Resolver
     self.resolver.update(v_ego, sm)
 
-    # PSD early-hint (curve-type predictions only; carstate filters on this platform)
-    pred_curve = CS.cruiseState.speedLimitPredicative
-    hint_active = pred_curve > 0. and v_ego > HINT_MIN_V_EGO
-    if hint_active and not self.hint_was_active:
-      self.hint_anchor_v = v_cruise_cluster  # cap references the setpoint at hint onset (no ratchet)
-    self.hint_was_active = hint_active
-    hint_v = max(pred_curve, self.hint_anchor_v - HINT_MAX_TRIM_MS) if hint_active else 255.
-
     # Speed Limit Assist
     has_speed_limit = self.resolver.speed_limit_valid or self.resolver.speed_limit_last_valid
     # press-truth: the driver's stalk presses arrive as stock button events (ICBM's own injected
@@ -102,8 +83,6 @@ class LongitudinalPlannerSP:
     btn_set_engage = bool(cs_sp.userSetEngagePressLatched) or ((not acc_on) and BET.setCruise in pressed)
     self.sla.update(long_enabled, long_override, v_ego, a_ego, v_cruise_cluster, self.resolver.speed_limit,
                     self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp,
-                    curve_v_target=min(self.scc.vision.output_v_target, hint_v),
-                    curve_active=self.scc.vision.is_active or hint_active,
                     acc_enabled=acc_on, user_btn_adjust=btn_adjust, user_btn_set_engage=btn_set_engage)
 
     targets = {

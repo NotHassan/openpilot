@@ -49,25 +49,6 @@ LIMIT_SPEED_OFFSET_TH = -1.  # m/s Maximum offset between speed limit and curren
 
 V_CRUISE_UNSET = 255.
 
-# Curve assist (auto mode + SCC-Vision -> ICBM): trim the setpoint just enough to take the bend
-# ahead within steering authority, then restore. The bend is re-evaluated every frame, so the
-# working bound is a ROLLING floor relative to current speed: a real deep bend staircases down as
-# the car slows (floor follows v_ego), while a phantom reading can only ever pull a small step
-# before the next frames correct it. The absolute reduction cap is just a catastrophe backstop.
-# No rolling floor: with big-step (+/-10) ICBM presses the design is to open the speed-setpoint
-# gap immediately (measured: ACC decel scales with the gap, ~1.0 m/s2 at 29). The command goes
-# straight to the bend's required speed; protection is the absolute backstop below plus the
-# live-target rule (recomputed every frame, never below what the bend needs, released the moment
-# the bend is makeable). A phantom reading costs only the decel of the ~1-2 s until frames
-# correct, then big-step restore recovers.
-CURVE_MAX_REDUCTION = {True: 45, False: 28}  # kph / mph below baseline (absolute backstop)
-CURVE_MIN_V_EGO = 15.  # m/s (~54 km/h): curve trim only at road speed
-# On winding roads the vision turn state cycles entering->turning->leaving->enabled every few
-# seconds between successive bends; instantly flipping to restore on each micro-gap meant the
-# ICBM spin-up (0.4 s) plus target hysteresis never produced a single press (road forensics,
-# bend B: triggered 3.8 s before entry, zero presses). Hold the trim through short gaps.
-CURVE_GAP_HOLD_S = 2.5
-
 CRUISE_BUTTONS_PLUS = (ButtonType.accelCruise, ButtonType.resumeCruise)
 CRUISE_BUTTONS_MINUS = (ButtonType.decelCruise, ButtonType.setCruise)
 CRUISE_BUTTON_CONFIRM_HOLD = 0.5  # secs.
@@ -91,7 +72,6 @@ class SpeedLimitAssist:
     set_speed_limit_assist_availability(self.CP, self.CP_SP, self.params)
     self.enabled = self.params.get("SpeedLimitMode", return_default=True) == Mode.assist
     self.non_pcm_auto_mode = self.params.get_bool("SpeedLimitNonPcmAutoMode")
-    self.curve_assist_enabled = self._read_bool_safe("CurveSpeedAssist")
     self.long_enabled = False
     self.long_enabled_prev = False
     self.is_enabled = False
@@ -118,26 +98,12 @@ class SpeedLimitAssist:
     self._state_prev = SpeedLimitAssistState.disabled
     self.pcm_op_long = CP.openpilotLongitudinalControl and CP.pcmCruise
     self.override_limit_conv = -1   # TIGUAN auto mode: zone value (conv units) the user overrode in; -1 = none
-    # curve assist state (auto mode only)
-    self._curve_v_target = float(V_CRUISE_UNSET)  # m/s, from SCC-Vision
-    self._curve_active = False
-    self.curve_engaged = False
-    self.curve_restoring = False
-    self.curve_target_conv = -1
-    self.curve_baseline_conv = -1  # what to walk back to after the bend
-    self.curve_user_cancelled = False  # user spoke mid-bend: latched until this bend episode ends
-    self.curve_gap_frames = 0          # frames since the curve signal dropped (micro-gap hold)
-    self._curve_raise_frames = 0   # ratchet: frames the raw target has been asking to rise
-    self._curve_raise_tick = 0
     self.acc_enabled = False       # stock ACC engaged (cruiseState.enabled)
     self.acc_enabled_prev = False
-    self.curve_frozen_frames = 0   # frames spent frozen through a takeover/disengage
     # Zone-change offset carry (auto mode): on a DESCENDING zone change, keep the driver's current
     # relative offset (100 in an 80 -> 80 in a 60); ascending changes use the configured offset.
     self.carried_target_conv = -1
     self.carried_for_limit_conv = -1  # the zone limit the carry was computed FOR: any other limit ignores it
-    self._target_change_frames = 99  # frames since the working target last changed
-    self.curve_restore_to_conv = -1  # restore endpoint (baseline capped at the current zone target)
     self.user_btn_frames = 0         # frames since a genuine driver stalk press (press-truth)
     self.stable_limit_conv = -1      # zone debounce: the confirmed working zone limit
     self.stable_final_ms = 0.        # and its target (limit + offset), in m/s
@@ -184,13 +150,6 @@ class SpeedLimitAssist:
 
   def get_v_target_from_control(self) -> float:
     speed_conv = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
-    # curve assist has priority: it also operates in user-override zones (baseline = user setpoint)
-    if not self.pcm_op_long:
-      if self.curve_engaged and self.curve_target_conv > 0 and self.acc_enabled:
-        return self.curve_target_conv * speed_conv
-      if self.curve_restoring and self.curve_baseline_conv > 0:
-        restore_to = self.curve_restore_to_conv if self.curve_restore_to_conv > 0 else self.curve_baseline_conv
-        return restore_to * speed_conv
 
     if self._has_speed_limit:
       if self.pcm_op_long and self.is_enabled:
@@ -215,13 +174,6 @@ class SpeedLimitAssist:
       set_speed_limit_assist_availability(self.CP, self.CP_SP, self.params)
       self.enabled = self.params.get("SpeedLimitMode", return_default=True) == Mode.assist
       self.non_pcm_auto_mode = self.params.get_bool("SpeedLimitNonPcmAutoMode")
-      self.curve_assist_enabled = self._read_bool_safe("CurveSpeedAssist")
-
-  def _read_bool_safe(self, key: str) -> bool:
-    try:
-      return self.params.get_bool(key)
-    except Exception:
-      return False
 
   def update_car_state(self, CS: car.CarState) -> None:
     now = time.monotonic()
@@ -269,7 +221,6 @@ class SpeedLimitAssist:
     self.target_set_speed_conv = pcm_long_required_max_set_speed_conv if self.pcm_op_long else self.speed_limit_final_last_conv
     if not self.pcm_op_long and self.non_pcm_auto_mode and self._carried_valid():
       self.target_set_speed_conv = self.carried_target_conv
-    self._target_change_frames = 0 if self.target_set_speed_conv != self.prev_target_set_speed_conv else self._target_change_frames + 1
 
   @property
   def apply_confirm_speed_threshold(self) -> bool:
@@ -470,148 +421,6 @@ class SpeedLimitAssist:
       self._pending_limit_conv = -1
       self._pending_frames = 0
 
-  def _update_curve_assist(self) -> None:
-    # Trim the setpoint for the bend ahead (SCC-Vision), independent of zone-override state, then
-    # restore. Overrides target_set_speed_conv so _expected_walk_change() classifies ICBM's walk
-    # toward (and back from) the curve speed as expected -- never as a user override.
-    # curve assist is independent of the zone-assist mode: it works off the driver's setpoint
-    # (baseline) even with SpeedLimitMode set to information/warning -- disabling automatic
-    # zone-based setpoint changes must not kill bend trimming
-    if not (self.curve_assist_enabled and self.non_pcm_auto_mode):
-      # feature off: hard reset
-      self.curve_engaged = False
-      self.curve_restoring = False
-      self.curve_baseline_conv = -1
-      self.curve_frozen_frames = 0
-      return
-
-    speed_conv = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
-    zone_in_charge = self.state == SpeedLimitAssistState.active and self._has_speed_limit
-
-    # Driver takeover (brake) disengages stock ACC -- and on this car openpilot itself
-    # (carControl.enabled follows it) -- and the cluster setpoint reads 0/garbage; treat none of
-    # that as user input. Freeze the curve/restore state and continue on re-engage, so the
-    # original speed is still restored after the bend (road forensics: braking mid-bend wiped the
-    # restore memory and the setpoint stayed at the trimmed value). Bounded: a takeover longer
-    # than 30 s drops the memory -- restoring a stale baseline minutes later could be wrong.
-    # (Skip the first frame back too -- the prev-setpoint tracker spans the disengagement.)
-    if not (self.long_enabled and self.acc_enabled and self.acc_enabled_prev):
-      if self.curve_engaged and not self._curve_active:
-        self.curve_engaged = False   # bend ended during the takeover: what's left to do is restore
-        self.curve_restoring = True
-      # the driver adjusting the setpoint memory in standby (or SET-engaging a new speed) is law:
-      # a memory change AWAY from our target drops the curve state so the restore can't fight it.
-      # Toward-changes are the standby walker itself. Bounds guard against invalid readings
-      # (memory reads 0/unset around the disengage edges).
-      if (self.curve_engaged or self.curve_restoring) and self.user_btn_frames > 0:
-        # driver pressed a stalk button during the takeover: their standby adjustment (or
-        # SET-engage speed) is law -- drop the memory (RES-engage sends no adjust flag)
-        self.curve_engaged = False
-        self.curve_restoring = False
-        self.curve_baseline_conv = -1
-        self.curve_user_cancelled = True
-        self.curve_frozen_frames = 0
-        return
-      if self.curve_engaged or self.curve_restoring:
-        self.curve_frozen_frames += 1
-        if self.curve_frozen_frames > int(30. / DT_MDL):
-          self.curve_engaged = False
-          self.curve_restoring = False
-          self.curve_baseline_conv = -1
-          self.curve_frozen_frames = 0
-      return
-    self.curve_frozen_frames = 0
-
-    # the user speaking mid-curve (or mid-restore) wins for this bend: drop out entirely.
-    # Expectation must reference OUR commanded target (curve or restore value) -- not the zone
-    # target update_calculations just reset -- or ICBM's own walk past the midpoint reads as user.
-    if (self.curve_engaged or self.curve_restoring) and self.v_cruise_cluster_changed:
-      # press-truth only (see _expected_walk_change): no stalk press, not the user
-      if self.user_btn_frames > 0:
-        self.curve_engaged = False
-        self.curve_restoring = False
-        self.curve_baseline_conv = -1
-        self.curve_user_cancelled = True  # theirs until this bend is over
-        return
-
-    curve_conv = round(self._curve_v_target * speed_conv) if self._curve_active and self._curve_v_target < V_CRUISE_UNSET else -1
-
-    if curve_conv > 0 and self.v_ego >= CURVE_MIN_V_EGO:
-      self.curve_gap_frames = 0
-      if self.curve_user_cancelled:
-        return  # user owns this bend; re-arm only after the curve episode ends
-      if not self.curve_engaged:
-        # baseline to restore: the zone target when the assist is in charge, else the user's setpoint.
-        # A chained bend engaging mid-restore keeps the ORIGINAL baseline -- re-snapshotting the
-        # half-restored setpoint would silently forget the user's speed across S-curves.
-        if self.curve_restoring and self.curve_baseline_conv > 0:
-          baseline = self.curve_baseline_conv
-        else:
-          baseline = self.target_set_speed_conv if zone_in_charge else self.v_cruise_cluster_conv
-        if curve_conv <= baseline - 2:
-          self.curve_engaged = True
-          self.curve_restoring = False
-          self.curve_baseline_conv = baseline
-          self.curve_target_conv = -1
-          self._curve_raise_frames = 0
-          self._curve_raise_tick = 0
-      elif zone_in_charge:
-        self.curve_baseline_conv = self.target_set_speed_conv  # track zone changes mid-bend
-      if self.curve_engaged:
-        abs_floor = self.curve_baseline_conv - CURVE_MAX_REDUCTION[self.is_metric]
-        capped = max(curve_conv, abs_floor)
-        raw_target = min(capped, self.curve_baseline_conv)
-        # Ratchet: follow the estimate DOWN instantly (safety), but UP only once the higher
-        # estimate persists ~1s, then at ~2 units/s. The raw vision target flickers tens of
-        # units at 20Hz; chasing it froze the setpoint at the momentary minimum and churned
-        # ICBM's direction state into paralysis (road trace: held 70 while estimate read 90).
-        if self.curve_target_conv <= 0 or raw_target < self.curve_target_conv:
-          self.curve_target_conv = raw_target
-          self._curve_raise_frames = 0
-          self._curve_raise_tick = 0
-        elif raw_target >= self.curve_target_conv + 2:
-          self._curve_raise_frames += 1
-          if self._curve_raise_frames >= int(1.0 / DT_MDL):
-            self._curve_raise_tick += 1
-            if self._curve_raise_tick >= int(0.5 / DT_MDL):
-              self.curve_target_conv += 1
-              self._curve_raise_tick = 0
-        else:
-          self._curve_raise_frames = 0
-        self.target_set_speed_conv = self.curve_target_conv
-    else:
-      self.curve_gap_frames += 1
-      in_gap = self.curve_gap_frames <= int(CURVE_GAP_HOLD_S / DT_MDL)
-      if self.curve_engaged and in_gap:
-        # hold the trim through micro-gaps between successive bends: the vision state cycles on
-        # winding roads and an instant flip to restore starved ICBM of a stable target
-        self.target_set_speed_conv = self.curve_target_conv
-        return
-      if in_gap and self.curve_user_cancelled:
-        return  # a micro-gap does not end the episode: the user's cancel holds across it
-      self.curve_user_cancelled = False  # bend episode truly over: re-arm for the next one
-      if self.curve_engaged:  # bend done: walk back up
-        self.curve_engaged = False
-        self.curve_restoring = True
-      if self.curve_restoring:
-        # if a zone change during the bend lowered the working target below the baseline, restore
-        # only up to it -- but ONLY when the zone structure is in charge (active state). A baseline
-        # from a user-override zone (inactive) is the driver's law and restores in full; capping it
-        # at the zone target silently shaved user overrides (road stall: 100-override capped to 80).
-        if self.state == SpeedLimitAssistState.active:
-          zone_target = self.carried_target_conv if self._carried_valid() else \
-                        (self.speed_limit_final_last_conv if self._has_speed_limit else -1)
-          restore_to = min(self.curve_baseline_conv, zone_target) if zone_target > 0 else self.curve_baseline_conv
-        else:
-          restore_to = self.curve_baseline_conv
-        self.curve_restore_to_conv = restore_to
-        if zone_in_charge or self.curve_baseline_conv <= 0 or self.v_cruise_cluster_conv >= restore_to:
-          # zone target takes over naturally, or we are back at the driver's speed
-          self.curve_restoring = False
-          self.curve_baseline_conv = -1
-        else:
-          self.target_set_speed_conv = restore_to
-
   def _expected_walk_change(self) -> bool:
     # ICBM walks the setpoint in +/-1 presses and, when the target is far, +/-10 big-step presses
     # (which the cluster may round to a 10s multiple, so any step up to 10 toward the target is
@@ -619,8 +428,7 @@ class SpeedLimitAssist:
     # is the user.
     # press-truth ONLY: the driver's presses are directly observable as stock button events and
     # ICBM's injected presses never appear there. Distance/direction heuristics used to guess --
-    # and road-replay proved they cancel OUR OWN in-flight press at the trim->restore handoff
-    # (setpoints stranded at 82/76/93 with zero buttons pressed). No button, not the user.
+    # and road-replay proved they can misclassify injected presses. No button, not the user.
     return self.user_btn_frames <= 0
 
   def _zone_change_carry(self, old_limit_conv: int, new_limit_conv: int, basis_conv: int) -> None:
@@ -670,8 +478,7 @@ class SpeedLimitAssist:
         elif limit_conv > 0 and limit_conv != self.override_limit_conv:
           # real zone change: structure takes over. Descending, keep the driver's current offset
           # (their overridden setpoint relative to the old zone); ascending, configured offset.
-          basis = self.curve_baseline_conv if (self.curve_engaged or self.curve_restoring) else self.v_cruise_cluster_conv
-          self._zone_change_carry(self.override_limit_conv, limit_conv, basis)
+          self._zone_change_carry(self.override_limit_conv, limit_conv, self.v_cruise_cluster_conv)
           self.state = SpeedLimitAssistState.active
 
     elif self.long_enabled and self.enabled:
@@ -712,10 +519,7 @@ class SpeedLimitAssist:
 
   def update(self, long_enabled: bool, long_override: bool, v_ego: float, a_ego: float, v_cruise_cluster: float, speed_limit: float,
              speed_limit_final_last: float, has_speed_limit: bool, distance: float, events_sp: EventsSP,
-             curve_v_target: float = float(V_CRUISE_UNSET), curve_active: bool = False,
              acc_enabled: bool = True, user_btn_adjust: bool = False, user_btn_set_engage: bool = False) -> None:
-    self._curve_v_target = curve_v_target
-    self._curve_active = curve_active
     self.acc_enabled = acc_enabled
     if user_btn_adjust or user_btn_set_engage:
       self.user_btn_frames = int(1.0 / DT_MDL)   # driver spoke: latch for the cluster's reaction time
@@ -732,7 +536,6 @@ class SpeedLimitAssist:
 
     self.update_params()
     self.update_calculations(v_cruise_cluster)
-    self._update_curve_assist()
 
     self._state_prev = self.state
     if self.pcm_op_long:

@@ -943,10 +943,10 @@
                   ]
                 },
                 {
-                  "key": "CurveSpeedAssist",
+                  "key": "PredictiveBendWarning",
                   "widget": "toggle",
-                  "title": "Curve Speed Assist",
-                  "description": "Lowers the cruise control set speed just enough to take the bend ahead within steering limits, then restores it after the bend. Only acts when the turn cannot be made at the current set speed; reduction capped at 25 km/h (15 mph). Requires ICBM.",
+                  "title": "Predictive Bend Warning",
+                  "description": "Warns when a bend ahead may exceed the Comma's steering capability at your current speed. The Comma keeps steering until you take over.",
                   "enablement": [
                     {
                       "type": "offroad_only"
