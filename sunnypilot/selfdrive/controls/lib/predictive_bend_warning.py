@@ -15,7 +15,9 @@ MIN_SAFE_SPEED_DELTA = 5.0 * CV.KPH_TO_MS
 MAX_TIME_TO_BEND = 8.0
 PERSISTENCE_FRAMES = round(0.5 / DT_MDL)
 CLEAR_FRAMES = round(3.0 / DT_MDL)
+REARM_FRAMES = round(10.0 / DT_MDL)
 MIN_MODEL_SPEED = 1.0
+HIGH_PSD_QUALITY = 3
 
 
 class WarningState(IntEnum):
@@ -86,8 +88,11 @@ class PredictiveBendWarning:
     self.enabled = enabled
     self.state = WarningState.idle
     self.speed_eligible = False
+    self.map_quality_latched = False
     self.candidate_frames = 0
     self.clear_frames = 0
+    self.rearm_ready = True
+    self.safe_frames = REARM_FRAMES
     self.episode = 0
 
   @staticmethod
@@ -130,11 +135,20 @@ class PredictiveBendWarning:
       return source_reason_ordinals.get(value, RejectionReason.sourceUnavailable)
     return RejectionReason.__members__.get(name, RejectionReason.sourceUnavailable)
 
+  @staticmethod
+  def _map_quality_high(preview) -> bool:
+    return (
+      int(getattr(preview, "mapMatchQuality", 0)) == HIGH_PSD_QUALITY
+      and int(getattr(preview, "geometryQuality", 0)) == HIGH_PSD_QUALITY
+    )
+
   @classmethod
-  def _evaluate_map(cls, v_ego: float, preview) -> BendPrediction:
+  def _evaluate_map(cls, v_ego: float, preview, allow_low_quality: bool = False) -> BendPrediction:
     if preview is None or not bool(getattr(preview, "valid", False)):
       reason = cls._map_rejection_reason(getattr(preview, "rejectionReason", "sourceUnavailable"))
       return BendPrediction(rejection_reason=reason)
+    if not allow_low_quality and not cls._map_quality_high(preview):
+      return BendPrediction(rejection_reason=RejectionReason.sanityFilter)
 
     curvature = float(getattr(preview, "curvature", math.nan))
     distance = float(getattr(preview, "distance", math.nan))
@@ -189,12 +203,21 @@ class PredictiveBendWarning:
 
     return first_valid or BendPrediction(rejection_reason=rejection_reason)
 
-  def _reset_state(self, reset_speed_gate: bool = False) -> None:
+  def _reset_state(self, reset_speed_gate: bool = False, reset_rearm: bool = False) -> None:
     self.state = WarningState.idle
+    self.map_quality_latched = False
     self.candidate_frames = 0
     self.clear_frames = 0
     if reset_speed_gate:
       self.speed_eligible = False
+    if reset_rearm:
+      self.rearm_ready = True
+      self.safe_frames = REARM_FRAMES
+
+  def _finish_episode(self) -> None:
+    self._reset_state()
+    self.rearm_ready = False
+    self.safe_frames = 0
 
   def _gated_output(self, lateral_active: bool, v_ego: float, reason: RejectionReason) -> BendWarningOutput:
     return BendWarningOutput(
@@ -230,13 +253,13 @@ class PredictiveBendWarning:
 
   def update(self, lateral_active, v_ego, map_preview, model_data) -> BendWarningOutput:
     if not self.enabled:
-      self._reset_state(reset_speed_gate=True)
+      self._reset_state(reset_speed_gate=True, reset_rearm=True)
       return self._gated_output(lateral_active, v_ego, RejectionReason.disabled)
     if not lateral_active:
-      self._reset_state(reset_speed_gate=True)
+      self._reset_state(reset_speed_gate=True, reset_rearm=True)
       return self._gated_output(lateral_active, v_ego, RejectionReason.lateralInactive)
     if v_ego < EXIT_SPEED:
-      self._reset_state(reset_speed_gate=True)
+      self._reset_state(reset_speed_gate=True, reset_rearm=True)
       return self._gated_output(lateral_active, v_ego, RejectionReason.belowSpeed)
 
     if v_ego >= ENTER_SPEED:
@@ -244,15 +267,36 @@ class PredictiveBendWarning:
     if not self.speed_eligible:
       self._reset_state()
       return self._gated_output(lateral_active, v_ego, RejectionReason.belowSpeed)
+    if v_ego < ENTER_SPEED and self.state in (WarningState.idle, WarningState.candidate):
+      self._reset_state()
+      return self._gated_output(lateral_active, v_ego, RejectionReason.belowSpeed)
 
-    map_prediction = self._evaluate_map(v_ego, map_preview)
+    map_prediction = self._evaluate_map(v_ego, map_preview, self.map_quality_latched)
     vision_prediction = self._evaluate_vision(v_ego, model_data)
+    map_in_window_risk = (
+      map_prediction.valid
+      and map_prediction.unsafe
+      and 0.0 < map_prediction.time_to_bend <= MAX_TIME_TO_BEND
+    )
+    if (
+      map_in_window_risk
+      and self._map_quality_high(map_preview)
+      and (self.state != WarningState.idle or self.rearm_ready)
+    ):
+      self.map_quality_latched = True
     source, selected = self._fuse(map_prediction, vision_prediction)
     unsafe = selected is not None
     in_window_risk = unsafe and 0.0 < selected.time_to_bend <= MAX_TIME_TO_BEND
 
     if self.state == WarningState.idle:
-      if in_window_risk:
+      if not self.rearm_ready:
+        if in_window_risk:
+          self.safe_frames = 0
+        else:
+          self.safe_frames += 1
+          if self.safe_frames >= REARM_FRAMES:
+            self.rearm_ready = True
+      elif in_window_risk:
         self.state = WarningState.candidate
         self.candidate_frames = 1
     elif self.state == WarningState.candidate:
@@ -267,14 +311,17 @@ class PredictiveBendWarning:
       if not in_window_risk:
         self.state = WarningState.clearing
         self.clear_frames = 1
+        self.safe_frames = 1
     elif self.state == WarningState.clearing:
       if in_window_risk:
         self.state = WarningState.warning
         self.clear_frames = 0
+        self.safe_frames = 0
       else:
         self.clear_frames += 1
+        self.safe_frames += 1
         if self.clear_frames >= CLEAR_FRAMES:
-          self._reset_state()
+          self._finish_episode()
 
     selected = selected or BendPrediction()
     return BendWarningOutput(

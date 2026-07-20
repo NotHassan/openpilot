@@ -13,6 +13,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.predictive_bend_warning import 
   ENTER_SPEED,
   EXIT_SPEED,
   PERSISTENCE_FRAMES,
+  REARM_FRAMES,
   BendPrediction,
   BendWarningOutput,
   PredictiveBendWarning,
@@ -35,12 +36,15 @@ def test_parameter_is_registered_default_off():
   assert params.get("PredictiveBendWarning", return_default=True) is False
 
 
-def map_preview(curvature=UNSAFE_CURVATURE, distance=150.0, *, valid=True, rejection_reason="none"):
+def map_preview(curvature=UNSAFE_CURVATURE, distance=150.0, *, valid=True, rejection_reason="none",
+                map_match_quality=3, geometry_quality=3):
   return SimpleNamespace(
     valid=valid,
     curvature=curvature,
     distance=distance,
     rejectionReason=rejection_reason,
+    mapMatchQuality=map_match_quality,
+    geometryQuality=geometry_quality,
   )
 
 
@@ -121,6 +125,46 @@ def test_map_calculations_use_current_vehicle_speed():
   assert prediction.time_to_bend == pytest.approx(120.0 / V_EGO)
 
 
+@pytest.mark.parametrize(
+  ("map_match_quality", "geometry_quality"),
+  [
+    (0, 3),
+    (3, 0),
+    (2, 3),
+    (3, 2),
+  ],
+)
+def test_low_quality_map_cannot_start_warning(map_match_quality, geometry_quality):
+  controller = PredictiveBendWarning(enabled=True)
+  preview = map_preview(
+    map_match_quality=map_match_quality,
+    geometry_quality=geometry_quality,
+  )
+
+  for _ in range(PERSISTENCE_FRAMES + 1):
+    output = controller.update(True, V_EGO, preview, empty_model())
+
+  assert output.state == WarningState.idle
+  assert not output.map_valid
+  assert output.map_prediction.rejection_reason == RejectionReason.sanityFilter
+  assert not output.emit_event
+
+
+def test_high_quality_map_latches_through_quality_flicker_for_same_episode():
+  controller = PredictiveBendWarning(enabled=True)
+  output = controller.update(True, V_EGO, map_preview(), empty_model())
+  assert output.state == WarningState.candidate
+
+  low_quality_preview = map_preview(map_match_quality=0, geometry_quality=0)
+  for _ in range(PERSISTENCE_FRAMES - 1):
+    output = controller.update(True, V_EGO, low_quality_preview, empty_model())
+
+  assert output.state == WarningState.warning
+  assert output.map_valid
+  assert output.source == WarningSource.map
+  assert output.episode == 1
+
+
 def test_camera_calculates_curvature_and_selects_earliest_unsafe_point():
   early_index = first_index_at_or_after(2.0)
   later_index = first_index_at_or_after(4.0)
@@ -196,7 +240,18 @@ def test_speed_gate_has_50_45_kph_hysteresis_and_does_not_arm_below_entry():
   assert output.state == WarningState.candidate
 
   output = controller.update(True, 47.0 / 3.6, low_speed_unsafe_preview, empty_model())
-  assert output.state == WarningState.candidate
+  assert output.state == WarningState.idle
+  assert output.rejection_reason == RejectionReason.belowSpeed
+
+
+def test_active_warning_uses_45_kph_exit_hysteresis():
+  controller = PredictiveBendWarning(enabled=True)
+  low_speed_unsafe_preview = map_preview(curvature=0.02, distance=50.0)
+  output = advance_to_warning(controller, low_speed_unsafe_preview)
+  assert output.state == WarningState.warning
+
+  output = controller.update(True, 47.0 / 3.6, low_speed_unsafe_preview, empty_model())
+  assert output.state == WarningState.warning
 
   output = controller.update(True, 44.9 / 3.6, low_speed_unsafe_preview, empty_model())
   assert output.state == WarningState.idle
@@ -252,7 +307,7 @@ def test_first_credible_point_below_five_seconds_forms_candidate_immediately_but
   assert output.emit_event
 
 
-def test_source_dropout_enters_clearing_and_rearms_after_exactly_three_seconds():
+def test_source_dropout_silences_after_three_seconds_but_requires_ten_safe_seconds_to_rearm():
   controller = PredictiveBendWarning(enabled=True)
   output = advance_to_warning(controller)
   assert output.episode == 1
@@ -267,6 +322,18 @@ def test_source_dropout_enters_clearing_and_rearms_after_exactly_three_seconds()
   assert output.state == WarningState.idle
   assert not output.emit_event
   assert output.episode == 1
+
+  for _ in range(PERSISTENCE_FRAMES + 1):
+    output = controller.update(True, V_EGO, map_preview(), empty_model())
+  assert output.state == WarningState.idle
+  assert not output.emit_event
+  assert output.episode == 1
+
+  for _ in range(REARM_FRAMES):
+    output = controller.update(
+      True, V_EGO, map_preview(curvature=SAFE_CURVATURE), empty_model(),
+    )
+  assert output.state == WarningState.idle
 
   output = advance_to_warning(controller)
   assert output.state == WarningState.warning
@@ -303,7 +370,7 @@ def test_out_of_window_unsafe_prediction_during_clearing_does_not_revive_warning
   assert output.episode == 1
 
 
-def test_out_of_window_risk_holds_event_only_for_normal_clearing_grace_then_rearms():
+def test_out_of_window_risk_holds_event_for_clearing_grace_then_stays_suppressed():
   controller = PredictiveBendWarning(enabled=True)
   assert advance_to_warning(controller).episode == 1
 
@@ -323,10 +390,13 @@ def test_out_of_window_risk_holds_event_only_for_normal_clearing_grace_then_rear
   assert output.episode == 1
   assert output.map_prediction.unsafe
 
-  output = advance_to_warning(controller, map_preview(distance=V_EGO * 4.0))
-  assert output.state == WarningState.warning
-  assert output.emit_event
-  assert output.episode == 2
+  for _ in range(PERSISTENCE_FRAMES + 1):
+    output = controller.update(
+      True, V_EGO, map_preview(distance=V_EGO * 4.0), empty_model(),
+    )
+  assert output.state == WarningState.idle
+  assert not output.emit_event
+  assert output.episode == 1
 
 
 def test_connected_bends_stay_in_one_episode_without_a_second_entry():
@@ -343,6 +413,46 @@ def test_connected_bends_stay_in_one_episode_without_a_second_entry():
   output = controller.update(True, V_EGO, map_preview(distance=80.0), empty_model())
   assert output.state == WarningState.warning
   assert output.emit_event
+  assert output.episode == 1
+
+
+def test_connected_bend_risk_after_four_second_gap_does_not_start_second_episode():
+  controller = PredictiveBendWarning(enabled=True)
+  assert advance_to_warning(controller).episode == 1
+
+  safe_frames = round(4.0 / DT_MDL)
+  for _ in range(safe_frames):
+    output = controller.update(
+      True, V_EGO, map_preview(curvature=SAFE_CURVATURE), empty_model(),
+    )
+  assert output.state == WarningState.idle
+  assert not output.emit_event
+
+  for _ in range(PERSISTENCE_FRAMES + 1):
+    output = controller.update(True, V_EGO, map_preview(distance=80.0), empty_model())
+
+  assert output.state == WarningState.idle
+  assert not output.emit_event
+  assert output.episode == 1
+
+
+def test_rearm_clock_starts_after_clearing_alert_fully_disappears():
+  controller = PredictiveBendWarning(enabled=True)
+  assert advance_to_warning(controller).episode == 1
+
+  silent_frames = round(8.5 / DT_MDL)
+  for _ in range(CLEAR_FRAMES + silent_frames):
+    output = controller.update(
+      True, V_EGO, map_preview(curvature=SAFE_CURVATURE), empty_model(),
+    )
+  assert output.state == WarningState.idle
+  assert not output.emit_event
+
+  for _ in range(PERSISTENCE_FRAMES + 1):
+    output = controller.update(True, V_EGO, map_preview(distance=80.0), empty_model())
+
+  assert output.state == WarningState.idle
+  assert not output.emit_event
   assert output.episode == 1
 
 
