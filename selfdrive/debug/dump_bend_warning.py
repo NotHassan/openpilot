@@ -77,7 +77,7 @@ def analyze_messages(messages: Iterable[Any]) -> tuple[list[dict[str, Any]], dic
   episode_starts = 0
   episode_ends = 0
   event_entries = 0
-  warning_entries_below_50_kph = 0
+  warning_entries_below_40_kph = 0
   previous_active = False
 
   for row in rows:
@@ -88,7 +88,7 @@ def analyze_messages(messages: Iterable[Any]) -> tuple[list[dict[str, Any]], dic
       event_entries += 1
       entry_counts[episode] = entry_counts.get(episode, 0) + 1
       episode_sources.setdefault(episode, row["source"])
-      warning_entries_below_50_kph += row["current_speed_kph"] < 50.0
+      warning_entries_below_40_kph += row["current_speed_kph"] < 40.0
     elif previous_active and not active:
       episode_ends += 1
 
@@ -108,9 +108,9 @@ def analyze_messages(messages: Iterable[Any]) -> tuple[list[dict[str, Any]], dic
     "both_episodes": sum(source == "both" for source in episode_sources.values()),
     "earliest_warning_time_s": first_warning,
     "minimum_time_to_bend_by_episode_s": {str(episode): minimum_ttb[episode] for episode in sorted(minimum_ttb)},
-    "warnings_below_50_kph": sum(row["event_active"] and row["current_speed_kph"] < 50.0 for row in rows),
-    "warning_entries_below_50_kph": warning_entries_below_50_kph,
-    "warnings_below_45_kph": sum(row["event_active"] and row["current_speed_kph"] < 45.0 for row in rows),
+    "warnings_below_40_kph": sum(row["event_active"] and row["current_speed_kph"] < 40.0 for row in rows),
+    "warning_entries_below_40_kph": warning_entries_below_40_kph,
+    "warnings_below_35_kph": sum(row["event_active"] and row["current_speed_kph"] < 35.0 for row in rows),
     "warnings_lateral_inactive": sum(row["event_active"] and not row["lateral_active"] for row in rows),
     "repeated_episode_sounds": sum(max(entries - 1, 0) for entries in entry_counts.values()),
   }
@@ -134,8 +134,8 @@ def main(argv: list[str] | None = None) -> int:
 
   print(json.dumps(summary, sort_keys=True, separators=(",", ":"), allow_nan=False))
   unsafe = (
-    summary["warning_entries_below_50_kph"] > 0
-    or summary["warnings_below_45_kph"] > 0
+    summary["warning_entries_below_40_kph"] > 0
+    or summary["warnings_below_35_kph"] > 0
     or summary["warnings_lateral_inactive"] > 0
     or summary["repeated_episode_sounds"] > 0
   )

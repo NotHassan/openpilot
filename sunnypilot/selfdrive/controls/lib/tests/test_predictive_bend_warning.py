@@ -88,8 +88,8 @@ def advance_to_warning(controller, preview=None, model=None):
 
 
 def test_contract_constants_enum_ordinals_and_immutable_outputs():
-  assert ENTER_SPEED == pytest.approx(50.0 / 3.6)
-  assert EXIT_SPEED == pytest.approx(45.0 / 3.6)
+  assert ENTER_SPEED == pytest.approx(40.0 / 3.6)
+  assert EXIT_SPEED == pytest.approx(35.0 / 3.6)
   assert PERSISTENCE_FRAMES == round(0.5 / DT_MDL)
   assert CLEAR_FRAMES == round(3.0 / DT_MDL)
   assert [state.value for state in WarningState] == [0, 1, 2, 3]
@@ -228,32 +228,32 @@ def test_disagreeing_unsafe_sources_choose_earliest_and_log_both():
   assert output.time_to_bend == ModelConstants.T_IDXS[camera_index]
 
 
-def test_speed_gate_has_50_45_kph_hysteresis_and_does_not_arm_below_entry():
+def test_speed_gate_has_40_35_kph_hysteresis_and_does_not_arm_below_entry():
   controller = PredictiveBendWarning(enabled=True)
-  low_speed_unsafe_preview = map_preview(curvature=0.02, distance=50.0)
+  low_speed_unsafe_preview = map_preview(curvature=0.03, distance=50.0)
 
-  output = controller.update(True, 47.0 / 3.6, low_speed_unsafe_preview, empty_model())
+  output = controller.update(True, 37.0 / 3.6, low_speed_unsafe_preview, empty_model())
   assert output.state == WarningState.idle
   assert output.rejection_reason == RejectionReason.belowSpeed
 
-  output = controller.update(True, 50.0 / 3.6, low_speed_unsafe_preview, empty_model())
+  output = controller.update(True, 40.0 / 3.6, low_speed_unsafe_preview, empty_model())
   assert output.state == WarningState.candidate
 
-  output = controller.update(True, 47.0 / 3.6, low_speed_unsafe_preview, empty_model())
+  output = controller.update(True, 37.0 / 3.6, low_speed_unsafe_preview, empty_model())
   assert output.state == WarningState.idle
   assert output.rejection_reason == RejectionReason.belowSpeed
 
 
-def test_active_warning_uses_45_kph_exit_hysteresis():
+def test_active_warning_uses_35_kph_exit_hysteresis():
   controller = PredictiveBendWarning(enabled=True)
-  low_speed_unsafe_preview = map_preview(curvature=0.02, distance=50.0)
+  low_speed_unsafe_preview = map_preview(curvature=0.03, distance=50.0)
   output = advance_to_warning(controller, low_speed_unsafe_preview)
   assert output.state == WarningState.warning
 
-  output = controller.update(True, 47.0 / 3.6, low_speed_unsafe_preview, empty_model())
+  output = controller.update(True, 37.0 / 3.6, low_speed_unsafe_preview, empty_model())
   assert output.state == WarningState.warning
 
-  output = controller.update(True, 44.9 / 3.6, low_speed_unsafe_preview, empty_model())
+  output = controller.update(True, 34.9 / 3.6, low_speed_unsafe_preview, empty_model())
   assert output.state == WarningState.idle
   assert output.rejection_reason == RejectionReason.belowSpeed
 

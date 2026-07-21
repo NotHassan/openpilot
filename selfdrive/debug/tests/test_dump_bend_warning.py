@@ -109,9 +109,9 @@ def test_stable_jsonl_rows_and_episode_summary(tmp_path):
     "both_episodes": 1,
     "earliest_warning_time_s": 12.5,
     "minimum_time_to_bend_by_episode_s": {"1": 5.5, "2": 4.0},
-    "warnings_below_50_kph": 0,
-    "warning_entries_below_50_kph": 0,
-    "warnings_below_45_kph": 0,
+    "warnings_below_40_kph": 0,
+    "warning_entries_below_40_kph": 0,
+    "warnings_below_35_kph": 0,
     "warnings_lateral_inactive": 0,
     "repeated_episode_sounds": 0,
   }
@@ -158,29 +158,29 @@ def test_repeated_serialized_event_entry_in_one_episode_is_counted():
 
 def test_safety_counts_follow_serialized_event_not_diagnostic_state():
   messages = [
-    bend_warning_message(1.0, state="warning", episode=1, current_speed_kph=49.0,
+    bend_warning_message(1.0, state="warning", episode=1, current_speed_kph=39.0,
                          lateral_active=False, serialized_event=False),
-    bend_warning_message(2.0, state="idle", episode=2, current_speed_kph=49.0,
+    bend_warning_message(2.0, state="idle", episode=2, current_speed_kph=39.0,
                          lateral_active=False, serialized_event=True),
   ]
 
   _, summary = analyze_messages(messages)
 
-  assert summary["warnings_below_50_kph"] == 1
-  assert summary["warning_entries_below_50_kph"] == 1
-  assert summary["warnings_below_45_kph"] == 0
+  assert summary["warnings_below_40_kph"] == 1
+  assert summary["warning_entries_below_40_kph"] == 1
+  assert summary["warnings_below_35_kph"] == 0
   assert summary["warnings_lateral_inactive"] == 1
 
 
 @pytest.mark.parametrize(
   "messages, expected_field",
   [
-    ([bend_warning_message(1.0, state="warning", source="map", episode=1, current_speed_kph=49.9)],
-     "warning_entries_below_50_kph"),
+    ([bend_warning_message(1.0, state="warning", source="map", episode=1, current_speed_kph=39.9)],
+     "warning_entries_below_40_kph"),
     ([
-      bend_warning_message(1.0, state="warning", source="map", episode=1, current_speed_kph=50.1),
-      bend_warning_message(2.0, state="clearing", source="map", episode=1, current_speed_kph=44.9),
-    ], "warnings_below_45_kph"),
+      bend_warning_message(1.0, state="warning", source="map", episode=1, current_speed_kph=40.1),
+      bend_warning_message(2.0, state="clearing", source="map", episode=1, current_speed_kph=34.9),
+    ], "warnings_below_35_kph"),
     ([bend_warning_message(1.0, state="warning", source="vision", episode=1, lateral_active=False)],
      "warnings_lateral_inactive"),
     ([
@@ -205,18 +205,18 @@ def test_active_warning_may_continue_through_speed_hysteresis(tmp_path):
   input_log = tmp_path / "hysteresis.zst"
   output_jsonl = tmp_path / "hysteresis.jsonl"
   messages = [
-    bend_warning_message(1.0, state="warning", source="map", episode=1, current_speed_kph=50.48),
-    bend_warning_message(2.0, state="clearing", source="map", episode=1, current_speed_kph=49.0),
-    bend_warning_message(3.0, state="clearing", source="map", episode=1, current_speed_kph=45.17),
-    bend_warning_message(4.0, state="idle", source="none", episode=1, current_speed_kph=44.0),
+    bend_warning_message(1.0, state="warning", source="map", episode=1, current_speed_kph=40.48),
+    bend_warning_message(2.0, state="clearing", source="map", episode=1, current_speed_kph=39.0),
+    bend_warning_message(3.0, state="clearing", source="map", episode=1, current_speed_kph=35.17),
+    bend_warning_message(4.0, state="idle", source="none", episode=1, current_speed_kph=34.0),
   ]
   save_log(str(input_log), messages)
 
   assert main([str(input_log), "--jsonl", str(output_jsonl)]) == 0
   _, summary = analyze_messages(messages)
-  assert summary["warnings_below_50_kph"] == 2
-  assert summary["warning_entries_below_50_kph"] == 0
-  assert summary["warnings_below_45_kph"] == 0
+  assert summary["warnings_below_40_kph"] == 2
+  assert summary["warning_entries_below_40_kph"] == 0
+  assert summary["warnings_below_35_kph"] == 0
 
 
 def test_cli_writes_stable_jsonl_and_prints_summary(tmp_path):

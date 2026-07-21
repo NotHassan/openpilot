@@ -8,8 +8,8 @@ from openpilot.common.realtime import DT_MDL
 from openpilot.sunnypilot.models.constants import ModelConstants
 
 
-ENTER_SPEED = 50.0 * CV.KPH_TO_MS
-EXIT_SPEED = 45.0 * CV.KPH_TO_MS
+ENTER_SPEED = 40.0 * CV.KPH_TO_MS
+EXIT_SPEED = 35.0 * CV.KPH_TO_MS
 WARNING_LAT_ACCEL = 2.0
 MIN_SAFE_SPEED_DELTA = 5.0 * CV.KPH_TO_MS
 MAX_TIME_TO_BEND = 8.0
